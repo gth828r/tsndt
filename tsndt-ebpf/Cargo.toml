@@ -1,0 +1,18 @@
+[package]
+name = "tsndt-ebpf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tsndt-common = { path = "../tsndt-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "tsndt"
+path = "src/main.rs"
