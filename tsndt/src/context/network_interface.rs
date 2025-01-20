@@ -22,7 +22,6 @@ use ratatui::{
     },
     DefaultTerminal, Frame,
 };
-use slice_deque::{sdeq, SliceDeque};
 
 use super::{ContextRunState, TsndtContext};
 
@@ -57,9 +56,9 @@ pub(crate) struct NetworkInterfaceView {
 pub(crate) struct NetworkInterfaceModel<'a> {
     interfaces: Vec<NetworkInterface>,
     prev_packet_counts: HashMap<u32, u32>,
-    packet_count_data: HashMap<u32, SliceDeque<(f64, f64)>>,
+    packet_count_data: HashMap<u32, Vec<(f64, f64)>>,
     prev_byte_counts: HashMap<u32, u64>,
-    byte_count_data: HashMap<u32, SliceDeque<(f64, f64)>>,
+    byte_count_data: HashMap<u32, Vec<(f64, f64)>>,
     tick_count: f64,
     collecting: HashMap<u32, bool>,
     bpf: &'a mut aya::Ebpf,
@@ -246,17 +245,17 @@ impl<'a> NetworkInterfaceContext<'a> {
 
         // Initialize packet counts to 0
         let mut prev_packet_counts = HashMap::new();
-        let mut packet_count_data: HashMap<u32, SliceDeque<(f64, f64)>> = HashMap::new();
+        let mut packet_count_data: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
         for interface in &interfaces {
-            packet_count_data.insert(interface.index, sdeq![(0.0, 0.0); 1]);
+            packet_count_data.insert(interface.index, vec![(0.0, 0.0); 1]);
             prev_packet_counts.insert(interface.index, 0);
         }
 
         // Initialize byte counts to 0
         let mut prev_byte_counts = HashMap::new();
-        let mut byte_count_data: HashMap<u32, SliceDeque<(f64, f64)>> = HashMap::new();
+        let mut byte_count_data: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
         for interface in &interfaces {
-            byte_count_data.insert(interface.index, sdeq![(0.0, 0.0); 1]);
+            byte_count_data.insert(interface.index, vec![(0.0, 0.0); 1]);
             prev_byte_counts.insert(interface.index, 0);
         }
 
@@ -391,7 +390,7 @@ impl<'a> NetworkInterfaceModel<'a> {
                     .unwrap();
             }
             self.packet_count_data
-                .insert(interface_index, sdeq![(0.0, 0.0); 1]);
+                .insert(interface_index, vec![(0.0, 0.0); 1]);
 
             let mut ebpf_ingress_byte_counters: aya::maps::HashMap<&mut MapData, u32, u64> =
                 aya::maps::HashMap::try_from(self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap())
@@ -402,7 +401,7 @@ impl<'a> NetworkInterfaceModel<'a> {
                     .unwrap();
             }
             self.byte_count_data
-                .insert(interface_index, sdeq![(0.0, 0.0); 1]);
+                .insert(interface_index, vec![(0.0, 0.0); 1]);
             Ok(())
         } else {
             Err(eyre!(
@@ -425,14 +424,14 @@ impl<'a> NetworkInterfaceModel<'a> {
             let prev_val = self.prev_packet_counts.get(&interface.index).unwrap();
 
             if l.len() as f64 > self.window_size {
-                l.pop_front();
+                l.remove(0);
             }
 
             if let Ok(val) = result_val {
-                l.push_back((self.tick_count, (val - prev_val) as f64));
+                l.push((self.tick_count, (val - prev_val) as f64));
                 self.prev_packet_counts.insert(interface.index, val);
             } else {
-                l.push_back((self.tick_count, 0.0));
+                l.push((self.tick_count, 0.0));
             }
         }
 
@@ -446,14 +445,14 @@ impl<'a> NetworkInterfaceModel<'a> {
             let prev_val = self.prev_byte_counts.get(&interface.index).unwrap();
 
             if l.len() as f64 > self.window_size {
-                l.pop_front();
+                l.remove(0);
             }
 
             if let Ok(val) = result_val {
-                l.push_back((self.tick_count, (val - prev_val) as f64));
+                l.push((self.tick_count, (val - prev_val) as f64));
                 self.prev_byte_counts.insert(interface.index, val);
             } else {
-                l.push_back((self.tick_count, 0.0));
+                l.push((self.tick_count, 0.0));
             }
         }
 
