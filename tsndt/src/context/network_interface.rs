@@ -78,9 +78,9 @@ fn get_autoscale_axis_bound(max_val: f64) -> f64 {
     axis_val * f64::ceil(val)
 }
 
-fn init_ebpf_programs<'a>(
+fn init_ebpf_programs(
     interfaces: &Vec<NetworkInterface>,
-    bpf: &'a mut aya::Ebpf,
+    bpf: &mut aya::Ebpf,
 ) -> Result<HashMap<u32, XdpLinkId>> {
     EbpfLogger::init(bpf).unwrap();
 
@@ -104,7 +104,7 @@ fn init_ebpf_programs<'a>(
             .is_err()
         {
             ebpf_ingress_packet_counters
-                .insert(&interface.index, &0, 0)
+                .insert(interface.index, 0, 0)
                 .unwrap();
         }
     }
@@ -115,7 +115,7 @@ fn init_ebpf_programs<'a>(
     for interface in interfaces {
         if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
             ebpf_ingress_byte_counters
-                .insert(&interface.index, &0, 0)
+                .insert(interface.index, 0, 0)
                 .unwrap();
         }
     }
@@ -186,23 +186,23 @@ impl<'a> TsndtContext for NetworkInterfaceContext<'a> {
                             }
                         }
                         KeyCode::Right => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                if self.view.histogram_width_percentage > 0 {
-                                    self.view.histogram_width_percentage -= 1;
-                                }
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && self.view.histogram_width_percentage > 0
+                            {
+                                self.view.histogram_width_percentage -= 1;
                             }
                         }
                         KeyCode::Left => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                if self.view.histogram_width_percentage < 100 {
-                                    self.view.histogram_width_percentage += 1;
-                                }
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && self.view.histogram_width_percentage < 100
+                            {
+                                self.view.histogram_width_percentage += 1;
                             }
                         }
                         KeyCode::Char('t') => {
                             let selected = self.view.interfaces_state.selected().unwrap_or(0);
                             let interface = self.model.interfaces.get(selected);
-                            if let Some(interface) = interface.clone() {
+                            if let Some(interface) = interface {
                                 let interface_index = interface.index;
                                 let interface_name = interface.name.clone();
                                 let result = self.model.toggle_ebpf_program(interface_index);
@@ -352,7 +352,7 @@ impl<'a> NetworkInterfaceModel<'a> {
                 .is_err()
             {
                 ebpf_ingress_packet_counters
-                    .insert(&interface.index, &0, 0)
+                    .insert(interface.index, 0, 0)
                     .unwrap();
             }
 
@@ -361,7 +361,7 @@ impl<'a> NetworkInterfaceModel<'a> {
                     .unwrap();
             if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
                 ebpf_ingress_byte_counters
-                    .insert(&interface.index, &0, 0)
+                    .insert(interface.index, 0, 0)
                     .unwrap();
             }
             Ok(())
@@ -387,7 +387,7 @@ impl<'a> NetworkInterfaceModel<'a> {
                 .is_err()
             {
                 ebpf_ingress_packet_counters
-                    .insert(&interface_index, &0, 0)
+                    .insert(interface_index, 0, 0)
                     .unwrap();
             }
             self.packet_count_data
@@ -398,7 +398,7 @@ impl<'a> NetworkInterfaceModel<'a> {
                     .unwrap();
             if ebpf_ingress_byte_counters.get(&interface_index, 0).is_err() {
                 ebpf_ingress_byte_counters
-                    .insert(&interface_index, &0, 0)
+                    .insert(interface_index, 0, 0)
                     .unwrap();
             }
             self.byte_count_data
@@ -406,7 +406,7 @@ impl<'a> NetworkInterfaceModel<'a> {
             Ok(())
         } else {
             Err(eyre!(
-                "Could not find an interface with index {} to detatch eBPF program from",
+                "Could not find an interface with index {} to detach eBPF program from",
                 interface_index
             ))
         }
@@ -528,7 +528,9 @@ impl NetworkInterfaceView {
                     let color_index = self
                         .interface_ui_colors
                         .get(&interface.index)
-                        .expect(&format!("No color found for interface {}", interface.name));
+                        .unwrap_or_else(|| {
+                            panic!("No color found for interface {}", interface.name)
+                        });
                     let dataset = Dataset::default()
                         .name(interface.name.clone())
                         .marker(symbols::Marker::Dot)
@@ -664,7 +666,9 @@ impl NetworkInterfaceView {
                     let color_index = self
                         .interface_ui_colors
                         .get(&interface.index)
-                        .expect(&format!("No color found for interface {}", interface.name));
+                        .unwrap_or_else(|| {
+                            panic!("No color found for interface {}", interface.name)
+                        });
                     let dataset = Dataset::default()
                         .name(interface.name.clone())
                         .marker(symbols::Marker::Dot)
@@ -750,7 +754,7 @@ impl NetworkInterfaceView {
 
         for interface in target_interfaces {
             let val = ebpf_ingress_byte_counters.get(&interface.index, 0).unwrap();
-            data.push((&interface.name, val as u64));
+            data.push((&interface.name, val));
         }
 
         data.sort_by_key(|datum| std::cmp::Reverse(datum.1));
@@ -771,7 +775,7 @@ impl NetworkInterfaceView {
                 let color_index = self
                     .interface_ui_colors
                     .get(&iface.index)
-                    .expect(&format!("No color found for interface {}", iface.name));
+                    .unwrap_or_else(|| panic!("No color found for interface {}", iface.name));
                 let collecting = model.collecting.get(&iface.index);
                 let color = if let Some(collecting) = collecting {
                     if *collecting {

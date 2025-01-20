@@ -1,0 +1,28 @@
+repos:
+-   repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+    -   id: fmt
+        args: ['--check', '--']
+    -   id: cargo-check
+    -   id: clippy
+-   repo: https://github.com/codespell-project/codespell
+    rev: v2.1.0
+    hooks:
+    -   id: codespell
+        args:
+        - "--ignore-words"
+        - ".codespell-ignore-words"
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.1.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: check-added-large-files
+        args:
+        - "--maxkb=2000"
+-   repo: local
+    hooks:
+    -   id: cargo-audit
+        name: cargo-audit
+        entry: bash -c 'cargo audit --deny unsound --deny yanked'
+        language: system

@@ -15,7 +15,10 @@ pub(crate) enum ContextRunState {
 }
 
 pub(crate) trait TsndtContext {
-    fn run(self: &mut Self, terminal: &mut DefaultTerminal) -> Result<(ContextRunState, Option<ContextId>)>;
+    fn run(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> Result<(ContextRunState, Option<ContextId>)>;
 }
 
-pub(crate) mod networkinterface;
+pub(crate) mod network_interface;
