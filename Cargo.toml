@@ -5,11 +5,17 @@ default-members = ["tsndt", "tsndt-common"]
 
 [workspace.dependencies]
 anyhow = { version = "1", default-features = false }
-aya = { version = "0.13.1", default-features = false }
-aya-build = { version = "0.1.2", default-features = false }
-aya-ebpf = { version = "0.1.1", default-features = false }
-aya-log = { version = "0.2.1", default-features = false }
-aya-log-ebpf = { version = "0.1.1", default-features = false }
+### Temporarily use custom Aya build to get access to interface index
+#aya = { version = "0.13.1", default-features = false }
+#aya-build = { version = "0.1.2", default-features = false }
+#aya-ebpf = { version = "0.1.1", default-features = false }
+#aya-log = { version = "0.2.1", default-features = false }
+#aya-log-ebpf = { version = "0.1.1", default-features = false }
+aya = { git = "https://github.com/gth828r/aya.git", branch = "1140.xdp-context-if-index-support", default-features = false }
+aya-build = { git = "https://github.com/gth828r/aya.git", branch = "1140.xdp-context-if-index-support", default-features = false }
+aya-ebpf = { git = "https://github.com/gth828r/aya.git", branch = "1140.xdp-context-if-index-support", default-features = false }
+aya-log = { git = "https://github.com/gth828r/aya.git", branch = "1140.xdp-context-if-index-support", default-features = false }
+aya-log-ebpf = { git = "https://github.com/gth828r/aya.git", branch = "1140.xdp-context-if-index-support", default-features = false }
 # `std` feature is currently required to build `clap`.
 #
 # See https://github.com/clap-rs/clap/blob/61f5ee5/clap_builder/src/lib.rs#L15.
