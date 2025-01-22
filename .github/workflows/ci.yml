@@ -44,6 +44,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install Rust nightly source toolchain
+        run: rustup toolchain install nightly --component rust-src
+      - name: Install Aya's bpf-linker
+        run: cargo install bpf-linker
       - name: Run clippy action
         uses: clechasseur/rs-clippy-check@v3
       - name: Cache Cargo dependencies
@@ -56,8 +60,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust nightly source toolchain
+        run: rustup toolchain install nightly --component rust-src
+      - name: Install Aya's bpf-linker
+        run: cargo install bpf-linker
       - name: Run cargo doc
         run: cargo doc --no-deps --all-features
         env:
@@ -68,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [ubuntu-latest]
     steps:
       # if your project needs OpenSSL, uncomment this to fix Windows builds.
       # it's commented out by default as the install command takes 5-10m.
@@ -77,8 +85,12 @@ jobs:
       # - run: vcpkg install openssl:x64-windows-static-md
       #   if: runner.os == 'Windows'
       - uses: actions/checkout@v4
-      - name: Install Rust
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust nightly source toolchain
+        run: rustup toolchain install nightly --component rust-src
+      - name: Install Aya's bpf-linker
+        run: cargo install bpf-linker
       # enable this ci template to run regardless of whether the lockfile is checked in or not
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''

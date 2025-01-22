@@ -22,7 +22,6 @@ use ratatui::{
     },
     DefaultTerminal, Frame,
 };
-use slice_deque::{sdeq, SliceDeque};
 
 use super::{ContextRunState, TsndtContext};
 
@@ -57,9 +56,9 @@ pub(crate) struct NetworkInterfaceView {
 pub(crate) struct NetworkInterfaceModel<'a> {
     interfaces: Vec<NetworkInterface>,
     prev_packet_counts: HashMap<u32, u32>,
-    packet_count_data: HashMap<u32, SliceDeque<(f64, f64)>>,
+    packet_count_data: HashMap<u32, Vec<(f64, f64)>>,
     prev_byte_counts: HashMap<u32, u64>,
-    byte_count_data: HashMap<u32, SliceDeque<(f64, f64)>>,
+    byte_count_data: HashMap<u32, Vec<(f64, f64)>>,
     tick_count: f64,
     collecting: HashMap<u32, bool>,
     bpf: &'a mut aya::Ebpf,
@@ -78,9 +77,9 @@ fn get_autoscale_axis_bound(max_val: f64) -> f64 {
     axis_val * f64::ceil(val)
 }
 
-fn init_ebpf_programs<'a>(
+fn init_ebpf_programs(
     interfaces: &Vec<NetworkInterface>,
-    bpf: &'a mut aya::Ebpf,
+    bpf: &mut aya::Ebpf,
 ) -> Result<HashMap<u32, XdpLinkId>> {
     EbpfLogger::init(bpf).unwrap();
 
@@ -104,7 +103,7 @@ fn init_ebpf_programs<'a>(
             .is_err()
         {
             ebpf_ingress_packet_counters
-                .insert(&interface.index, &0, 0)
+                .insert(interface.index, 0, 0)
                 .unwrap();
         }
     }
@@ -115,7 +114,7 @@ fn init_ebpf_programs<'a>(
     for interface in interfaces {
         if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
             ebpf_ingress_byte_counters
-                .insert(&interface.index, &0, 0)
+                .insert(interface.index, 0, 0)
                 .unwrap();
         }
     }
@@ -186,23 +185,23 @@ impl<'a> TsndtContext for NetworkInterfaceContext<'a> {
                             }
                         }
                         KeyCode::Right => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                if self.view.histogram_width_percentage > 0 {
-                                    self.view.histogram_width_percentage -= 1;
-                                }
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && self.view.histogram_width_percentage > 0
+                            {
+                                self.view.histogram_width_percentage -= 1;
                             }
                         }
                         KeyCode::Left => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                if self.view.histogram_width_percentage < 100 {
-                                    self.view.histogram_width_percentage += 1;
-                                }
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && self.view.histogram_width_percentage < 100
+                            {
+                                self.view.histogram_width_percentage += 1;
                             }
                         }
                         KeyCode::Char('t') => {
                             let selected = self.view.interfaces_state.selected().unwrap_or(0);
                             let interface = self.model.interfaces.get(selected);
-                            if let Some(interface) = interface.clone() {
+                            if let Some(interface) = interface {
                                 let interface_index = interface.index;
                                 let interface_name = interface.name.clone();
                                 let result = self.model.toggle_ebpf_program(interface_index);
@@ -246,17 +245,17 @@ impl<'a> NetworkInterfaceContext<'a> {
 
         // Initialize packet counts to 0
         let mut prev_packet_counts = HashMap::new();
-        let mut packet_count_data: HashMap<u32, SliceDeque<(f64, f64)>> = HashMap::new();
+        let mut packet_count_data: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
         for interface in &interfaces {
-            packet_count_data.insert(interface.index, sdeq![(0.0, 0.0); 1]);
+            packet_count_data.insert(interface.index, vec![(0.0, 0.0); 1]);
             prev_packet_counts.insert(interface.index, 0);
         }
 
         // Initialize byte counts to 0
         let mut prev_byte_counts = HashMap::new();
-        let mut byte_count_data: HashMap<u32, SliceDeque<(f64, f64)>> = HashMap::new();
+        let mut byte_count_data: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
         for interface in &interfaces {
-            byte_count_data.insert(interface.index, sdeq![(0.0, 0.0); 1]);
+            byte_count_data.insert(interface.index, vec![(0.0, 0.0); 1]);
             prev_byte_counts.insert(interface.index, 0);
         }
 
@@ -352,7 +351,7 @@ impl<'a> NetworkInterfaceModel<'a> {
                 .is_err()
             {
                 ebpf_ingress_packet_counters
-                    .insert(&interface.index, &0, 0)
+                    .insert(interface.index, 0, 0)
                     .unwrap();
             }
 
@@ -361,7 +360,7 @@ impl<'a> NetworkInterfaceModel<'a> {
                     .unwrap();
             if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
                 ebpf_ingress_byte_counters
-                    .insert(&interface.index, &0, 0)
+                    .insert(interface.index, 0, 0)
                     .unwrap();
             }
             Ok(())
@@ -387,26 +386,26 @@ impl<'a> NetworkInterfaceModel<'a> {
                 .is_err()
             {
                 ebpf_ingress_packet_counters
-                    .insert(&interface_index, &0, 0)
+                    .insert(interface_index, 0, 0)
                     .unwrap();
             }
             self.packet_count_data
-                .insert(interface_index, sdeq![(0.0, 0.0); 1]);
+                .insert(interface_index, vec![(0.0, 0.0); 1]);
 
             let mut ebpf_ingress_byte_counters: aya::maps::HashMap<&mut MapData, u32, u64> =
                 aya::maps::HashMap::try_from(self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap())
                     .unwrap();
             if ebpf_ingress_byte_counters.get(&interface_index, 0).is_err() {
                 ebpf_ingress_byte_counters
-                    .insert(&interface_index, &0, 0)
+                    .insert(interface_index, 0, 0)
                     .unwrap();
             }
             self.byte_count_data
-                .insert(interface_index, sdeq![(0.0, 0.0); 1]);
+                .insert(interface_index, vec![(0.0, 0.0); 1]);
             Ok(())
         } else {
             Err(eyre!(
-                "Could not find an interface with index {} to detatch eBPF program from",
+                "Could not find an interface with index {} to detach eBPF program from",
                 interface_index
             ))
         }
@@ -425,14 +424,14 @@ impl<'a> NetworkInterfaceModel<'a> {
             let prev_val = self.prev_packet_counts.get(&interface.index).unwrap();
 
             if l.len() as f64 > self.window_size {
-                l.pop_front();
+                l.remove(0);
             }
 
             if let Ok(val) = result_val {
-                l.push_back((self.tick_count, (val - prev_val) as f64));
+                l.push((self.tick_count, (val - prev_val) as f64));
                 self.prev_packet_counts.insert(interface.index, val);
             } else {
-                l.push_back((self.tick_count, 0.0));
+                l.push((self.tick_count, 0.0));
             }
         }
 
@@ -446,14 +445,14 @@ impl<'a> NetworkInterfaceModel<'a> {
             let prev_val = self.prev_byte_counts.get(&interface.index).unwrap();
 
             if l.len() as f64 > self.window_size {
-                l.pop_front();
+                l.remove(0);
             }
 
             if let Ok(val) = result_val {
-                l.push_back((self.tick_count, (val - prev_val) as f64));
+                l.push((self.tick_count, (val - prev_val) as f64));
                 self.prev_byte_counts.insert(interface.index, val);
             } else {
-                l.push_back((self.tick_count, 0.0));
+                l.push((self.tick_count, 0.0));
             }
         }
 
@@ -528,7 +527,9 @@ impl NetworkInterfaceView {
                     let color_index = self
                         .interface_ui_colors
                         .get(&interface.index)
-                        .expect(&format!("No color found for interface {}", interface.name));
+                        .unwrap_or_else(|| {
+                            panic!("No color found for interface {}", interface.name)
+                        });
                     let dataset = Dataset::default()
                         .name(interface.name.clone())
                         .marker(symbols::Marker::Dot)
@@ -664,7 +665,9 @@ impl NetworkInterfaceView {
                     let color_index = self
                         .interface_ui_colors
                         .get(&interface.index)
-                        .expect(&format!("No color found for interface {}", interface.name));
+                        .unwrap_or_else(|| {
+                            panic!("No color found for interface {}", interface.name)
+                        });
                     let dataset = Dataset::default()
                         .name(interface.name.clone())
                         .marker(symbols::Marker::Dot)
@@ -750,7 +753,7 @@ impl NetworkInterfaceView {
 
         for interface in target_interfaces {
             let val = ebpf_ingress_byte_counters.get(&interface.index, 0).unwrap();
-            data.push((&interface.name, val as u64));
+            data.push((&interface.name, val));
         }
 
         data.sort_by_key(|datum| std::cmp::Reverse(datum.1));
@@ -771,7 +774,7 @@ impl NetworkInterfaceView {
                 let color_index = self
                     .interface_ui_colors
                     .get(&iface.index)
-                    .expect(&format!("No color found for interface {}", iface.name));
+                    .unwrap_or_else(|| panic!("No color found for interface {}", iface.name));
                 let collecting = model.collecting.get(&iface.index);
                 let color = if let Some(collecting) = collecting {
                     if *collecting {

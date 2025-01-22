@@ -7,7 +7,7 @@ use ratatui::DefaultTerminal;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::{self, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use crate::context::{networkinterface::NetworkInterfaceContext, TsndtContext, ContextId};
+use crate::context::{network_interface::NetworkInterfaceContext, ContextId, TsndtContext};
 
 const DEFAULT_CONTEXT_ID: ContextId = 0;
 
@@ -70,9 +70,7 @@ impl<'a> App<'a> {
         let contexts: Vec<Box<dyn TsndtContext + 'a>> =
             vec![Box::new(NetworkInterfaceContext::new(bpf))];
 
-        Self {
-            contexts,
-        }
+        Self { contexts }
     }
 
     pub(crate) fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
@@ -89,7 +87,7 @@ impl<'a> App<'a> {
                     } else {
                         selected_context = DEFAULT_CONTEXT_ID;
                     }
-                },
+                }
             }
         }
 
