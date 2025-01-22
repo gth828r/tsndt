@@ -1,6 +1,21 @@
 # tsndt
-
 Tim's Secret Network Debugging Tool
+
+Observe network information in your terminal! The goal of the tool is to allow operators to perform an initial deep-dive of network traffic on specific target systems. It is not intended to replace proper monitoring infrastructure.
+
+## Demonstrations
+
+Data is tracked on a per-network-interface basis. Network interface data collection can be toggled on and off to help improve performance and reduce clutter on the plots.
+
+![Toggle network interfaces](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExdjI1bDk4OGJkM2RwbXR6N29iYXVkYnF6M3VndnEyZ3B0MjN2cWo3MSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/35Sn1yGtaNWpOFDGoj/giphy.gif)
+
+Plots can be resized so that the operator can focus on the data that they care about.
+
+![Resize plots](https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExY3VjaHM0MXdmNWIzbjBqd2l3MWFwNnNxeGNyZjAzbWdxOGNubHo1NSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/46mx4yblYumZsCB64u/giphy.gif)
+
+By default, the vertical axis of the time series plots scales to allow observation of all of the data in the observation window. Users can optionally switch to a manual zoom mode to avoid dynamic axis changes on the time series plots at the risk of being unable to see some data points.
+
+![Autoscaling and manual zoom](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYXViazB5aHNoaWtnZXl2anJweDh4dml1Nmd4M3dyaW42NjhsMDlxeSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/o2CFbM6iMUd3G5FmlO/giphy.gif)
 
 ## Prerequisites (for Aya)
 
