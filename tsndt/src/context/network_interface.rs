@@ -4,7 +4,7 @@ use std::{
 };
 
 use aya::{
-    maps::MapData,
+    maps::{MapData, PerCpuValues},
     programs::{xdp::XdpLinkId, Xdp, XdpFlags},
 };
 use aya_log::EbpfLogger;
@@ -55,10 +55,10 @@ pub(crate) struct NetworkInterfaceView {
 
 pub(crate) struct NetworkInterfaceModel<'a> {
     interfaces: Vec<NetworkInterface>,
-    prev_packet_counts: HashMap<u32, u32>,
-    packet_count_data: HashMap<u32, Vec<(f64, f64)>>,
-    prev_byte_counts: HashMap<u32, u64>,
-    byte_count_data: HashMap<u32, Vec<(f64, f64)>>,
+    cumul_packet_counts: HashMap<u32, u32>,
+    tick_packet_count_data: HashMap<u32, Vec<(f64, f64)>>,
+    cumul_byte_counts: HashMap<u32, u64>,
+    tick_byte_count_data: HashMap<u32, Vec<(f64, f64)>>,
     tick_count: f64,
     collecting: HashMap<u32, bool>,
     bpf: &'a mut aya::Ebpf,
@@ -86,7 +86,10 @@ fn init_ebpf_programs(
     let mut xdp_link_ids = HashMap::new();
 
     let program: &mut Xdp = bpf.program_mut("xdp_tsndt").unwrap().try_into().unwrap();
-    program.load().unwrap(); //
+    program.load().unwrap();
+
+    let num_cpus =
+        aya::util::nr_cpus().unwrap_or_else(|_| panic!("Unable to obtain the number of CPUs"));
 
     for interface in interfaces {
         let link_id = program.attach(&interface.name, XdpFlags::default())
@@ -94,28 +97,33 @@ fn init_ebpf_programs(
         xdp_link_ids.insert(interface.index, link_id);
     }
 
-    let mut ebpf_ingress_packet_counters: aya::maps::HashMap<&mut MapData, u32, u32> =
-        aya::maps::HashMap::try_from(bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap()).unwrap();
+    let mut ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u32> =
+        aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap())
+            .unwrap();
 
     for interface in interfaces {
         if ebpf_ingress_packet_counters
             .get(&interface.index, 0)
             .is_err()
         {
-            ebpf_ingress_packet_counters
-                .insert(interface.index, 0, 0)
-                .unwrap();
+            ebpf_ingress_packet_counters.insert(
+                interface.index,
+                PerCpuValues::try_from(vec![0u32; num_cpus])?,
+                0,
+            )?;
         }
     }
 
-    let mut ebpf_ingress_byte_counters: aya::maps::HashMap<&mut MapData, u32, u64> =
-        aya::maps::HashMap::try_from(bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap()).unwrap();
+    let mut ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u64> =
+        aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap()).unwrap();
 
     for interface in interfaces {
         if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
-            ebpf_ingress_byte_counters
-                .insert(interface.index, 0, 0)
-                .unwrap();
+            ebpf_ingress_byte_counters.insert(
+                interface.index,
+                PerCpuValues::try_from(vec![0u64; num_cpus])?,
+                0,
+            )?;
         }
     }
 
@@ -221,7 +229,7 @@ impl<'a> TsndtContext for NetworkInterfaceContext<'a> {
                 }
             }
             if last_tick.elapsed() >= tick_rate {
-                self.model.on_tick();
+                self.model.on_tick()?;
                 last_tick = Instant::now();
             }
         }
@@ -244,19 +252,23 @@ impl<'a> NetworkInterfaceContext<'a> {
         }
 
         // Initialize packet counts to 0
-        let mut prev_packet_counts = HashMap::new();
-        let mut packet_count_data: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
+        let mut cur_packet_counts = HashMap::new();
+        let mut cumul_packet_counts = HashMap::new();
+        let mut tick_packet_count_data: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
         for interface in &interfaces {
-            packet_count_data.insert(interface.index, vec![(0.0, 0.0); 1]);
-            prev_packet_counts.insert(interface.index, 0);
+            tick_packet_count_data.insert(interface.index, vec![(0.0, 0.0); 1]);
+            cur_packet_counts.insert(interface.index, 0);
+            cumul_packet_counts.insert(interface.index, 0);
         }
 
         // Initialize byte counts to 0
-        let mut prev_byte_counts = HashMap::new();
-        let mut byte_count_data: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
+        let mut cur_byte_counts = HashMap::new();
+        let mut cumul_byte_counts = HashMap::new();
+        let mut tick_byte_count_data: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
         for interface in &interfaces {
-            byte_count_data.insert(interface.index, vec![(0.0, 0.0); 1]);
-            prev_byte_counts.insert(interface.index, 0);
+            tick_byte_count_data.insert(interface.index, vec![(0.0, 0.0); 1]);
+            cur_byte_counts.insert(interface.index, 0);
+            cumul_byte_counts.insert(interface.index, 0);
         }
 
         // Enable collection on all interfaces
@@ -278,10 +290,10 @@ impl<'a> NetworkInterfaceContext<'a> {
                 tick_count: 0.0,
                 interfaces,
                 bpf,
-                packet_count_data,
-                prev_packet_counts,
-                byte_count_data,
-                prev_byte_counts,
+                tick_packet_count_data,
+                cumul_packet_counts,
+                tick_byte_count_data,
+                cumul_byte_counts,
                 collecting,
                 xdp_link_ids,
             },
@@ -342,26 +354,35 @@ impl<'a> NetworkInterfaceModel<'a> {
             let xdp_link_id = program.attach(&interface.name, XdpFlags::default())
                 .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE").unwrap();
             self.xdp_link_ids.insert(interface_index, xdp_link_id);
+            let num_cpus = aya::util::nr_cpus().unwrap();
 
-            let mut ebpf_ingress_packet_counters: aya::maps::HashMap<&mut MapData, u32, u32> =
-                aya::maps::HashMap::try_from(self.bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap())
-                    .unwrap();
+            let mut ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u32> =
+                aya::maps::PerCpuHashMap::try_from(
+                    self.bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap(),
+                )
+                .unwrap();
             if ebpf_ingress_packet_counters
                 .get(&interface.index, 0)
                 .is_err()
             {
-                ebpf_ingress_packet_counters
-                    .insert(interface.index, 0, 0)
-                    .unwrap();
+                ebpf_ingress_packet_counters.insert(
+                    interface.index,
+                    PerCpuValues::try_from(vec![0u32; num_cpus])?,
+                    0,
+                )?;
             }
 
-            let mut ebpf_ingress_byte_counters: aya::maps::HashMap<&mut MapData, u32, u64> =
-                aya::maps::HashMap::try_from(self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap())
-                    .unwrap();
+            let mut ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u64> =
+                aya::maps::PerCpuHashMap::try_from(
+                    self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap(),
+                )
+                .unwrap();
             if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
-                ebpf_ingress_byte_counters
-                    .insert(interface.index, 0, 0)
-                    .unwrap();
+                ebpf_ingress_byte_counters.insert(
+                    interface.index,
+                    PerCpuValues::try_from(vec![0u64; num_cpus])?,
+                    0,
+                )?;
             }
             Ok(())
         } else {
@@ -374,33 +395,42 @@ impl<'a> NetworkInterfaceModel<'a> {
 
     fn detach_ebpf_program(&mut self, interface_index: u32) -> Result<()> {
         let xdp_link_id = self.xdp_link_ids.remove(&interface_index);
+        let num_cpus = aya::util::nr_cpus().unwrap();
         if let Some(xdp_link_id) = xdp_link_id {
             let program: &mut Xdp = self.bpf.program_mut("xdp_tsndt").unwrap().try_into()?;
             program.detach(xdp_link_id)
             .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE").unwrap();
-            let mut ebpf_ingress_packet_counters: aya::maps::HashMap<&mut MapData, u32, u32> =
-                aya::maps::HashMap::try_from(self.bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap())
-                    .unwrap();
+            let mut ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u32> =
+                aya::maps::PerCpuHashMap::try_from(
+                    self.bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap(),
+                )
+                .unwrap();
             if ebpf_ingress_packet_counters
                 .get(&interface_index, 0)
                 .is_err()
             {
-                ebpf_ingress_packet_counters
-                    .insert(interface_index, 0, 0)
-                    .unwrap();
+                ebpf_ingress_packet_counters.insert(
+                    interface_index,
+                    PerCpuValues::try_from(vec![0u32; num_cpus])?,
+                    0,
+                )?;
             }
-            self.packet_count_data
+            self.tick_packet_count_data
                 .insert(interface_index, vec![(0.0, 0.0); 1]);
 
-            let mut ebpf_ingress_byte_counters: aya::maps::HashMap<&mut MapData, u32, u64> =
-                aya::maps::HashMap::try_from(self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap())
-                    .unwrap();
+            let mut ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u64> =
+                aya::maps::PerCpuHashMap::try_from(
+                    self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap(),
+                )
+                .unwrap();
             if ebpf_ingress_byte_counters.get(&interface_index, 0).is_err() {
-                ebpf_ingress_byte_counters
-                    .insert(interface_index, 0, 0)
-                    .unwrap();
+                ebpf_ingress_byte_counters.insert(
+                    interface_index,
+                    PerCpuValues::try_from(vec![0u64; num_cpus])?,
+                    0,
+                )?;
             }
-            self.byte_count_data
+            self.tick_byte_count_data
                 .insert(interface_index, vec![(0.0, 0.0); 1]);
             Ok(())
         } else {
@@ -411,54 +441,71 @@ impl<'a> NetworkInterfaceModel<'a> {
         }
     }
 
-    fn on_tick(&mut self) {
+    fn on_tick(&mut self) -> Result<()> {
         self.tick_count += 1.0;
 
-        let ebpf_ingress_packet_counters: aya::maps::HashMap<&MapData, u32, u32> =
-            aya::maps::HashMap::try_from(self.bpf.map("INGRESS_PACKET_COUNTERS").unwrap()).unwrap();
+        let ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&MapData, u32, u32> =
+            aya::maps::PerCpuHashMap::try_from(self.bpf.map("INGRESS_PACKET_COUNTERS").unwrap())?;
+
+        let num_cpus =
+            aya::util::nr_cpus().unwrap_or_else(|_| panic!("Could not get number of CPUs"));
 
         for interface in &self.interfaces {
-            let result_val = ebpf_ingress_packet_counters.get(&interface.index, 0);
-            let l = self.packet_count_data.get_mut(&interface.index).unwrap();
-            let prev_val = self.prev_packet_counts.get(&interface.index).unwrap();
+            let result_val = ebpf_ingress_packet_counters.get(&interface.index, 0)?;
+            let l = self
+                .tick_packet_count_data
+                .get_mut(&interface.index)
+                .unwrap();
+            let prev_val = self.cumul_packet_counts.get(&interface.index).unwrap();
 
             if l.len() as f64 > self.window_size {
                 l.remove(0);
             }
 
-            if let Ok(val) = result_val {
-                l.push((self.tick_count, (val - prev_val) as f64));
-                self.prev_packet_counts.insert(interface.index, val);
-            } else {
-                l.push((self.tick_count, 0.0));
+            // Sum up the value across all CPUs
+            let mut across_cpus_val: u32 = 0;
+            for cpu_id in 0..num_cpus {
+                if let Some(cpu_val) = result_val.get(cpu_id) {
+                    across_cpus_val += cpu_val;
+                }
             }
+
+            l.push((self.tick_count, (across_cpus_val - prev_val) as f64));
+            self.cumul_packet_counts
+                .insert(interface.index, across_cpus_val);
         }
 
-        let ebpf_ingress_byte_counters: aya::maps::HashMap<&mut MapData, u32, u64> =
-            aya::maps::HashMap::try_from(self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap())
-                .unwrap();
+        let ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&MapData, u32, u64> =
+            aya::maps::PerCpuHashMap::try_from(self.bpf.map("INGRESS_BYTE_COUNTERS").unwrap())?;
 
         for interface in &self.interfaces {
-            let result_val = ebpf_ingress_byte_counters.get(&interface.index, 0);
-            let l = self.byte_count_data.get_mut(&interface.index).unwrap();
-            let prev_val = self.prev_byte_counts.get(&interface.index).unwrap();
+            let result_val = ebpf_ingress_byte_counters.get(&interface.index, 0)?;
+            let l = self.tick_byte_count_data.get_mut(&interface.index).unwrap();
+            let prev_val = self.cumul_byte_counts.get(&interface.index).unwrap();
 
             if l.len() as f64 > self.window_size {
                 l.remove(0);
             }
 
-            if let Ok(val) = result_val {
-                l.push((self.tick_count, (val - prev_val) as f64));
-                self.prev_byte_counts.insert(interface.index, val);
-            } else {
-                l.push((self.tick_count, 0.0));
+            // Sum up the value across all CPUs
+            let mut across_cpus_val: u64 = 0;
+            for cpu_id in 0..num_cpus {
+                if let Some(cpu_val) = result_val.get(cpu_id) {
+                    across_cpus_val += cpu_val;
+                }
             }
+
+            l.push((self.tick_count, (across_cpus_val - prev_val) as f64));
+            self.cumul_byte_counts
+                .insert(interface.index, across_cpus_val);
         }
 
         if self.tick_count > self.window_size {
             self.window[0] += 1.0;
             self.window[1] += 1.0;
         }
+
+        Ok(())
     }
 }
 
@@ -510,13 +557,15 @@ impl NetworkInterfaceView {
             ),
         ];
 
-        let mut max_val = 0.0f64;
+        // Initialize max_val to 1.0 to avoid a quirk in the time series plot with autoscaling.
+        // If all values are 0 in the plot, and autoscaling starts at 0, then no points get plotted.
+        let mut max_val = 1.0f64;
         let mut datasets = Vec::with_capacity(model.interfaces.len());
         for interface in &model.interfaces {
             let collecting = model.collecting.get(&interface.index);
             if let Some(collecting) = collecting {
                 if *collecting {
-                    let data = model.packet_count_data.get(&interface.index).unwrap();
+                    let data = model.tick_packet_count_data.get(&interface.index).unwrap();
                     let iface_max_val = data.iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap().1;
                     max_val = if max_val.total_cmp(&iface_max_val).is_ge() {
                         max_val
@@ -596,10 +645,6 @@ impl NetworkInterfaceView {
         area: Rect,
         model: &NetworkInterfaceModel,
     ) {
-        let ebpf_ingress_packet_counters: aya::maps::HashMap<&MapData, u32, u32> =
-            aya::maps::HashMap::try_from(model.bpf.map("INGRESS_PACKET_COUNTERS").unwrap())
-                .unwrap();
-
         let mut target_interfaces: Vec<&NetworkInterface> =
             Vec::with_capacity(model.interfaces.len());
         for interface in &model.interfaces {
@@ -614,10 +659,8 @@ impl NetworkInterfaceView {
         let mut data: Vec<(&str, u64)> = Vec::with_capacity(target_interfaces.len());
 
         for interface in target_interfaces {
-            let val = ebpf_ingress_packet_counters
-                .get(&interface.index, 0)
-                .unwrap();
-            data.push((&interface.name, val as u64));
+            let val = model.cumul_packet_counts.get(&interface.index).unwrap();
+            data.push((&interface.name, *val as u64));
         }
 
         data.sort_by_key(|datum| std::cmp::Reverse(datum.1));
@@ -648,13 +691,15 @@ impl NetworkInterfaceView {
             ),
         ];
 
-        let mut max_val = 0.0f64;
+        // Initialize max_val to 1.0 to avoid a quirk in the time series plot with autoscaling.
+        // If all values are 0 in the plot, and autoscaling starts at 0, then no points get plotted.
+        let mut max_val = 1.0f64;
         let mut datasets = Vec::with_capacity(model.interfaces.len());
         for interface in &model.interfaces {
             let collecting = model.collecting.get(&interface.index);
             if let Some(collecting) = collecting {
                 if *collecting {
-                    let data = model.byte_count_data.get(&interface.index).unwrap();
+                    let data = model.tick_byte_count_data.get(&interface.index).unwrap();
                     let iface_max_val = data.iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap().1;
                     max_val = if max_val.total_cmp(&iface_max_val).is_ge() {
                         max_val
@@ -734,9 +779,6 @@ impl NetworkInterfaceView {
         area: Rect,
         model: &NetworkInterfaceModel,
     ) {
-        let ebpf_ingress_byte_counters: aya::maps::HashMap<&MapData, u32, u64> =
-            aya::maps::HashMap::try_from(model.bpf.map("INGRESS_BYTE_COUNTERS").unwrap()).unwrap();
-
         let mut target_interfaces: Vec<&NetworkInterface> =
             Vec::with_capacity(model.interfaces.len());
         for interface in &model.interfaces {
@@ -751,8 +793,8 @@ impl NetworkInterfaceView {
         let mut data: Vec<(&str, u64)> = Vec::with_capacity(target_interfaces.len());
 
         for interface in target_interfaces {
-            let val = ebpf_ingress_byte_counters.get(&interface.index, 0).unwrap();
-            data.push((&interface.name, val));
+            let val = model.cumul_byte_counts.get(&interface.index).unwrap();
+            data.push((&interface.name, *val));
         }
 
         data.sort_by_key(|datum| std::cmp::Reverse(datum.1));
