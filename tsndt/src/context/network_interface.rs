@@ -414,9 +414,8 @@ impl<'a> NetworkInterfaceModel<'a> {
     fn on_tick(&mut self) {
         self.tick_count += 1.0;
 
-        let ebpf_ingress_packet_counters: aya::maps::HashMap<&mut MapData, u32, u32> =
-            aya::maps::HashMap::try_from(self.bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap())
-                .unwrap();
+        let ebpf_ingress_packet_counters: aya::maps::HashMap<&MapData, u32, u32> =
+            aya::maps::HashMap::try_from(self.bpf.map("INGRESS_PACKET_COUNTERS").unwrap()).unwrap();
 
         for interface in &self.interfaces {
             let result_val = ebpf_ingress_packet_counters.get(&interface.index, 0);
