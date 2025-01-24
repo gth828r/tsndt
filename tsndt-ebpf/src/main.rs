@@ -6,26 +6,23 @@ use core::mem;
 use aya_ebpf::{
     bindings::xdp_action,
     macros::{map, xdp},
-    maps::HashMap,
+    maps::PerCpuHashMap,
     programs::XdpContext,
 };
 use aya_log_ebpf::error;
 
-// TODO: this should be made into a PerCpuHashMap. No need to deal with lock
-// contention at sample time in the kernel since we can just sum the values
-// from all CPUs on read without contention.
-// See https://medium.com/@stevelatif/aya-rust-tutorial-part-5-using-maps-4d26c4a2fff8
-#[map]
-static INGRESS_PACKET_COUNTERS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
+const MAX_NUM_INTERFACES: u32 = 1024;
 
 #[map]
-static INGRESS_BYTE_COUNTERS: HashMap<u32, u64> = HashMap::with_max_entries(1024, 0);
+static INGRESS_PACKET_COUNTERS: PerCpuHashMap<u32, u32> =
+    PerCpuHashMap::with_max_entries(MAX_NUM_INTERFACES, 0);
 
-#[xdp] //
+#[map]
+static INGRESS_BYTE_COUNTERS: PerCpuHashMap<u32, u64> =
+    PerCpuHashMap::with_max_entries(MAX_NUM_INTERFACES, 0);
 
+#[xdp]
 pub fn xdp_tsndt(ctx: XdpContext) -> u32 {
-    //
-
     match unsafe { try_xdp_tsndt(ctx) } {
         Ok(ret) => ret,
         Err(_) => xdp_action::XDP_ABORTED,
@@ -33,8 +30,6 @@ pub fn xdp_tsndt(ctx: XdpContext) -> u32 {
 }
 
 unsafe fn try_xdp_tsndt(ctx: XdpContext) -> Result<u32, u32> {
-    //
-
     // Using a modified version of Aya for this, but I've asked about it
     // See https://github.com/aya-rs/aya/discussions/1130
     let index = ctx.ingress_ifindex() as u32;
@@ -64,9 +59,6 @@ unsafe fn try_xdp_tsndt(ctx: XdpContext) -> Result<u32, u32> {
         }
     }
 
-    //info!(&ctx, "received a packet on iface {}", index);
-    //
-
     Ok(xdp_action::XDP_PASS)
 }
 
@@ -84,8 +76,7 @@ unsafe fn _ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ()> {
 }
 
 #[cfg(not(test))]
-#[panic_handler] //
-
+#[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
