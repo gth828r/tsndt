@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::collections::HashMap;
 
 use aya::{
     maps::{MapData, PerCpuValues},
@@ -9,7 +6,7 @@ use aya::{
 };
 use aya_log::EbpfLogger;
 use color_eyre::eyre::{eyre, Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -17,19 +14,20 @@ use ratatui::{
     symbols::{self},
     text::Span,
     widgets::{
-        Axis, BarChart, Block, Chart, Dataset, List, ListDirection, ListItem, ListState, Paragraph,
-        Wrap,
+        Axis, BarChart, Block, Chart, Dataset, LegendPosition, List, ListDirection, ListItem,
+        ListState,
     },
-    DefaultTerminal, Frame,
+    Frame,
 };
 
-use super::{ContextRunState, TsndtContext};
+use super::TsndtContext;
+use crate::app::TICK_RATE_MS;
 
-const TICK_RATE_MS: u64 = 200;
 const DISABLED_COLOR: Color = Color::Rgb(100, 100, 100);
 const ZOOM_CONTEXT_COLOR: Color = Color::LightBlue;
 const DEFAULT_HISTOGRAM_WIDTH_PERCENTAGE: u16 = 25;
 const DEFAULT_BYTE_COUNTERS_HEIGHT_PERCENTAGE: u16 = 50;
+const CONTEXT_NAME: &str = "Network Interfaces";
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 enum ZoomContext {
@@ -37,8 +35,8 @@ enum ZoomContext {
     Byte,
 }
 
-pub(crate) struct NetworkInterfaceContext<'a> {
-    pub(crate) model: NetworkInterfaceModel<'a>,
+pub(crate) struct NetworkInterfaceContext {
+    pub(crate) model: NetworkInterfaceModel,
     pub(crate) view: NetworkInterfaceView,
 }
 
@@ -53,7 +51,7 @@ pub(crate) struct NetworkInterfaceView {
     autoscaling: HashMap<ZoomContext, bool>,
 }
 
-pub(crate) struct NetworkInterfaceModel<'a> {
+pub(crate) struct NetworkInterfaceModel {
     interfaces: Vec<NetworkInterface>,
     cumul_packet_counts: HashMap<u32, u32>,
     tick_packet_count_data: HashMap<u32, Vec<(f64, f64)>>,
@@ -61,7 +59,6 @@ pub(crate) struct NetworkInterfaceModel<'a> {
     tick_byte_count_data: HashMap<u32, Vec<(f64, f64)>>,
     tick_count: f64,
     collecting: HashMap<u32, bool>,
-    bpf: &'a mut aya::Ebpf,
     xdp_link_ids: HashMap<u32, XdpLinkId>,
     window_size: f64,
     window: [f64; 2],
@@ -130,114 +127,119 @@ fn init_ebpf_programs(
     Ok(xdp_link_ids)
 }
 
-impl<'a> TsndtContext for NetworkInterfaceContext<'a> {
-    fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<(ContextRunState, Option<usize>)> {
-        let tick_rate = Duration::from_millis(TICK_RATE_MS);
-        let mut last_tick = Instant::now();
-        loop {
-            terminal.draw(|frame| self.view.draw(frame, &self.model))?;
+impl TsndtContext for NetworkInterfaceContext {
+    fn get_context_name(&self) -> String {
+        String::from(CONTEXT_NAME)
+    }
 
-            let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-            if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            return Ok((ContextRunState::Stopped, None));
-                        }
-                        KeyCode::Char('b') => {
-                            self.view.zoom_context = ZoomContext::Byte;
-                        }
-                        KeyCode::Char('p') => {
-                            self.view.zoom_context = ZoomContext::Packet;
-                        }
-                        KeyCode::Char('a') => {
-                            let val = !self.view.autoscaling[&self.view.zoom_context];
-                            self.view
-                                .autoscaling
-                                .insert(self.view.zoom_context.clone(), val);
-                        }
-                        KeyCode::Char('-') => match self.view.zoom_context {
-                            ZoomContext::Packet => self.view.packet_count_y_bounds[1] *= 2.0,
-                            ZoomContext::Byte => self.view.byte_count_y_bounds[1] *= 2.0,
-                        },
-                        KeyCode::Char('+') => match self.view.zoom_context {
-                            ZoomContext::Packet => self.view.packet_count_y_bounds[1] /= 2.0,
-                            ZoomContext::Byte => self.view.byte_count_y_bounds[1] /= 2.0,
-                        },
-                        KeyCode::Up => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                // Change the height of the plots
-                                if self.view.byte_counter_height_percentage < 100 {
-                                    self.view.byte_counter_height_percentage += 1;
-                                }
-                            } else {
-                                // Move the selected item in the interface list up
-                                let selected = self.view.interfaces_state.selected().unwrap_or(0);
-                                let candidate = if selected > 0 { selected - 1 } else { 0 };
-                                self.view.interfaces_state.select(Some(candidate));
-                            }
-                        }
-                        KeyCode::Down => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                // Change the height of the plots
-                                if self.view.byte_counter_height_percentage > 0 {
-                                    self.view.byte_counter_height_percentage -= 1;
-                                }
-                            } else {
-                                // Move the selected item in the interface list down
-                                let selected = self.view.interfaces_state.selected().unwrap_or(0);
-                                let candidate = selected + 1;
-                                if candidate < self.model.interfaces.len() {
-                                    self.view.interfaces_state.select(Some(candidate));
-                                }
-                            }
-                        }
-                        KeyCode::Right => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL)
-                                && self.view.histogram_width_percentage > 0
-                            {
-                                self.view.histogram_width_percentage -= 1;
-                            }
-                        }
-                        KeyCode::Left => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL)
-                                && self.view.histogram_width_percentage < 100
-                            {
-                                self.view.histogram_width_percentage += 1;
-                            }
-                        }
-                        KeyCode::Char('t') => {
-                            let selected = self.view.interfaces_state.selected().unwrap_or(0);
-                            let interface = self.model.interfaces.get(selected);
-                            if let Some(interface) = interface {
-                                let interface_index = interface.index;
-                                let interface_name = interface.name.clone();
-                                let result = self.model.toggle_ebpf_program(interface_index);
-                                if let Err(report) = result {
-                                    tracing::warn!(
-                                        "Failed to toggle interface {}: {}",
-                                        interface_name,
-                                        report
-                                    );
-                                }
-                            } else {
-                                tracing::warn!("Could not toggle selected interface (list index {}): there may be a bug", selected);
-                            }
-                        }
-                        _ => {}
+    fn get_command_help(&self) -> Vec<String> {
+        vec![
+            String::from("(↑/↓) Select interface, (t) Toggle interface monitoring"),
+            String::from(
+                "(b/p) Select plot zoom context, (a) Toggle autoscaling, (+/-) Y axis zoom",
+            ),
+            String::from("(Ctrl + ←/→): Change plot widths, (Ctrl + ↑/↓): Change plot heights"),
+        ]
+    }
+
+    fn handle_tick(&mut self, bpf: &aya::Ebpf) -> Result<()> {
+        self.model.on_tick(bpf)
+    }
+
+    fn handle_key_event(&mut self, key: KeyEvent, bpf: &mut aya::Ebpf) -> Result<()> {
+        match key.code {
+            KeyCode::Char('b') => {
+                self.view.zoom_context = ZoomContext::Byte;
+            }
+            KeyCode::Char('p') => {
+                self.view.zoom_context = ZoomContext::Packet;
+            }
+            KeyCode::Char('a') => {
+                let val = !self.view.autoscaling[&self.view.zoom_context];
+                self.view
+                    .autoscaling
+                    .insert(self.view.zoom_context.clone(), val);
+            }
+            KeyCode::Char('-') => match self.view.zoom_context {
+                ZoomContext::Packet => self.view.packet_count_y_bounds[1] *= 2.0,
+                ZoomContext::Byte => self.view.byte_count_y_bounds[1] *= 2.0,
+            },
+            KeyCode::Char('+') => match self.view.zoom_context {
+                ZoomContext::Packet => self.view.packet_count_y_bounds[1] /= 2.0,
+                ZoomContext::Byte => self.view.byte_count_y_bounds[1] /= 2.0,
+            },
+            KeyCode::Up => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    // Change the height of the plots
+                    if self.view.byte_counter_height_percentage < 100 {
+                        self.view.byte_counter_height_percentage += 1;
+                    }
+                } else {
+                    // Move the selected item in the interface list up
+                    let selected = self.view.interfaces_state.selected().unwrap_or(0);
+                    let candidate = if selected > 0 { selected - 1 } else { 0 };
+                    self.view.interfaces_state.select(Some(candidate));
+                }
+            }
+            KeyCode::Down => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    // Change the height of the plots
+                    if self.view.byte_counter_height_percentage > 0 {
+                        self.view.byte_counter_height_percentage -= 1;
+                    }
+                } else {
+                    // Move the selected item in the interface list down
+                    let selected = self.view.interfaces_state.selected().unwrap_or(0);
+                    let candidate = selected + 1;
+                    if candidate < self.model.interfaces.len() {
+                        self.view.interfaces_state.select(Some(candidate));
                     }
                 }
             }
-            if last_tick.elapsed() >= tick_rate {
-                self.model.on_tick()?;
-                last_tick = Instant::now();
+            KeyCode::Right => {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.view.histogram_width_percentage > 0
+                {
+                    self.view.histogram_width_percentage -= 1;
+                }
             }
+            KeyCode::Left => {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.view.histogram_width_percentage < 100
+                {
+                    self.view.histogram_width_percentage += 1;
+                }
+            }
+            KeyCode::Char('t') => {
+                let selected = self.view.interfaces_state.selected().unwrap_or(0);
+                let interface = self.model.interfaces.get(selected);
+                if let Some(interface) = interface {
+                    let interface_index = interface.index;
+                    let interface_name = interface.name.clone();
+                    let result = self.model.toggle_ebpf_program(interface_index, bpf);
+                    if let Err(report) = result {
+                        tracing::warn!("Failed to toggle interface {}: {}", interface_name, report);
+                    }
+                } else {
+                    tracing::warn!(
+                        "Could not toggle selected interface (list index {}): there may be a bug",
+                        selected
+                    );
+                }
+            }
+            _ => {}
         }
+
+        Ok(())
+    }
+
+    fn draw(&mut self, frame: &mut Frame, context_area: Rect) {
+        self.view.draw(frame, &self.model, context_area);
     }
 }
 
-impl<'a> NetworkInterfaceContext<'a> {
-    pub(crate) fn new(bpf: &'a mut aya::Ebpf) -> Self {
+impl NetworkInterfaceContext {
+    pub(crate) fn new(bpf: &mut aya::Ebpf) -> Self {
         // Initialize the interfaces list to include all known interfaces on the host system
         let mut interfaces = NetworkInterface::show().unwrap();
         interfaces.sort_by(|a, b| a.index.partial_cmp(&b.index).unwrap());
@@ -289,7 +291,6 @@ impl<'a> NetworkInterfaceContext<'a> {
                 window: [0.0, 50.0],
                 tick_count: 0.0,
                 interfaces,
-                bpf,
                 tick_packet_count_data,
                 cumul_packet_counts,
                 tick_byte_count_data,
@@ -311,17 +312,17 @@ impl<'a> NetworkInterfaceContext<'a> {
     }
 }
 
-impl<'a> NetworkInterfaceModel<'a> {
-    fn toggle_ebpf_program(&mut self, interface_index: u32) -> Result<()> {
+impl NetworkInterfaceModel {
+    fn toggle_ebpf_program(&mut self, interface_index: u32, bpf: &mut aya::Ebpf) -> Result<()> {
         if let Some(is_loaded) = self.collecting.get(&interface_index) {
             if *is_loaded {
-                let result = self.detach_ebpf_program(interface_index);
+                let result = self.detach_ebpf_program(interface_index, bpf);
                 if result.is_ok() {
                     self.collecting.insert(interface_index, false);
                 }
                 result
             } else {
-                let result = self.attach_ebpf_program(interface_index);
+                let result = self.attach_ebpf_program(interface_index, bpf);
                 if result.is_ok() {
                     self.collecting.insert(interface_index, true);
                 }
@@ -347,20 +348,18 @@ impl<'a> NetworkInterfaceModel<'a> {
         target_interface
     }
 
-    fn attach_ebpf_program(&mut self, interface_index: u32) -> Result<()> {
+    fn attach_ebpf_program(&mut self, interface_index: u32, bpf: &mut aya::Ebpf) -> Result<()> {
         let interface = self.find_interface(interface_index);
         if let Some(interface) = interface {
-            let program: &mut Xdp = self.bpf.program_mut("xdp_tsndt").unwrap().try_into()?;
+            let program: &mut Xdp = bpf.program_mut("xdp_tsndt").unwrap().try_into()?;
             let xdp_link_id = program.attach(&interface.name, XdpFlags::default())
                 .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE").unwrap();
             self.xdp_link_ids.insert(interface_index, xdp_link_id);
             let num_cpus = aya::util::nr_cpus().unwrap();
 
             let mut ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u32> =
-                aya::maps::PerCpuHashMap::try_from(
-                    self.bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap(),
-                )
-                .unwrap();
+                aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap())
+                    .unwrap();
             if ebpf_ingress_packet_counters
                 .get(&interface.index, 0)
                 .is_err()
@@ -373,10 +372,8 @@ impl<'a> NetworkInterfaceModel<'a> {
             }
 
             let mut ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u64> =
-                aya::maps::PerCpuHashMap::try_from(
-                    self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap(),
-                )
-                .unwrap();
+                aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap())
+                    .unwrap();
             if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
                 ebpf_ingress_byte_counters.insert(
                     interface.index,
@@ -393,18 +390,16 @@ impl<'a> NetworkInterfaceModel<'a> {
         }
     }
 
-    fn detach_ebpf_program(&mut self, interface_index: u32) -> Result<()> {
+    fn detach_ebpf_program(&mut self, interface_index: u32, bpf: &mut aya::Ebpf) -> Result<()> {
         let xdp_link_id = self.xdp_link_ids.remove(&interface_index);
         let num_cpus = aya::util::nr_cpus().unwrap();
         if let Some(xdp_link_id) = xdp_link_id {
-            let program: &mut Xdp = self.bpf.program_mut("xdp_tsndt").unwrap().try_into()?;
+            let program: &mut Xdp = bpf.program_mut("xdp_tsndt").unwrap().try_into()?;
             program.detach(xdp_link_id)
             .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE").unwrap();
             let mut ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u32> =
-                aya::maps::PerCpuHashMap::try_from(
-                    self.bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap(),
-                )
-                .unwrap();
+                aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INGRESS_PACKET_COUNTERS").unwrap())
+                    .unwrap();
             if ebpf_ingress_packet_counters
                 .get(&interface_index, 0)
                 .is_err()
@@ -419,10 +414,8 @@ impl<'a> NetworkInterfaceModel<'a> {
                 .insert(interface_index, vec![(0.0, 0.0); 1]);
 
             let mut ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u64> =
-                aya::maps::PerCpuHashMap::try_from(
-                    self.bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap(),
-                )
-                .unwrap();
+                aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INGRESS_BYTE_COUNTERS").unwrap())
+                    .unwrap();
             if ebpf_ingress_byte_counters.get(&interface_index, 0).is_err() {
                 ebpf_ingress_byte_counters.insert(
                     interface_index,
@@ -441,11 +434,11 @@ impl<'a> NetworkInterfaceModel<'a> {
         }
     }
 
-    fn on_tick(&mut self) -> Result<()> {
+    fn on_tick(&mut self, bpf: &aya::Ebpf) -> Result<()> {
         self.tick_count += 1.0;
 
         let ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&MapData, u32, u32> =
-            aya::maps::PerCpuHashMap::try_from(self.bpf.map("INGRESS_PACKET_COUNTERS").unwrap())?;
+            aya::maps::PerCpuHashMap::try_from(bpf.map("INGRESS_PACKET_COUNTERS").unwrap())?;
 
         let num_cpus =
             aya::util::nr_cpus().unwrap_or_else(|_| panic!("Could not get number of CPUs"));
@@ -476,7 +469,7 @@ impl<'a> NetworkInterfaceModel<'a> {
         }
 
         let ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&MapData, u32, u64> =
-            aya::maps::PerCpuHashMap::try_from(self.bpf.map("INGRESS_BYTE_COUNTERS").unwrap())?;
+            aya::maps::PerCpuHashMap::try_from(bpf.map("INGRESS_BYTE_COUNTERS").unwrap())?;
 
         for interface in &self.interfaces {
             let result_val = ebpf_ingress_byte_counters.get(&interface.index, 0)?;
@@ -510,11 +503,10 @@ impl<'a> NetworkInterfaceModel<'a> {
 }
 
 impl NetworkInterfaceView {
-    fn draw(&mut self, frame: &mut Frame, model: &NetworkInterfaceModel) {
-        let [display, commands] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(5)]).areas(frame.area());
+    fn draw(&mut self, frame: &mut Frame, model: &NetworkInterfaceModel, context_area: Rect) {
         let [iface_list, plots] =
-            Layout::horizontal([Constraint::Percentage(15), Constraint::Fill(1)]).areas(display);
+            Layout::horizontal([Constraint::Percentage(15), Constraint::Fill(1)])
+                .areas(context_area);
         let [packet_counts, byte_counts] = Layout::vertical([
             Constraint::Fill(1),
             Constraint::Percentage(self.byte_counter_height_percentage),
@@ -536,7 +528,6 @@ impl NetworkInterfaceView {
         self.render_packet_cumul_histogram(frame, packet_cumul_histogram, model);
         self.render_byte_time_series(frame, byte_time_series, model);
         self.render_byte_cumul_histogram(frame, byte_cumul_histogram, model);
-        self.render_commands(frame, commands);
     }
 
     fn render_packet_time_series(
@@ -634,7 +625,9 @@ impl NetworkInterfaceView {
                     .style(Style::default().fg(DISABLED_COLOR))
                     .labels(y_labels)
                     .bounds(self.packet_count_y_bounds),
-            );
+            )
+            .hidden_legend_constraints((Constraint::Min(0), Constraint::Min(0)))
+            .legend_position(Some(LegendPosition::TopLeft));
 
         frame.render_widget(chart, area);
     }
@@ -842,11 +835,5 @@ impl NetworkInterfaceView {
             .direction(ListDirection::TopToBottom);
 
         frame.render_stateful_widget(list, list_area, &mut self.interfaces_state);
-    }
-
-    fn render_commands(&mut self, frame: &mut Frame, commands_area: Rect) {
-        let p = Paragraph::new("(q) Quit, (↑/↓) Select interface, (t) Toggle interface monitoring\n(b/p) Select plot zoom context, (a) Toggle autoscaling, (+/-) Y axis zoom\n(Ctrl + ←/→): Change plot widths, (Ctrl + ↑/↓): Change plot heights").block(
-        Block::bordered().title("Commands")).wrap(Wrap{trim: true});
-        frame.render_widget(p, commands_area);
     }
 }

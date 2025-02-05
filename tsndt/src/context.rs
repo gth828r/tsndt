@@ -5,20 +5,21 @@
 //  * etc
 
 use color_eyre::eyre::Result;
-use ratatui::DefaultTerminal;
+use crossterm::event::KeyEvent;
+use ratatui::{layout::Rect, Frame};
 
 pub(crate) type ContextId = usize;
 
-pub(crate) enum ContextRunState {
-    _Paused,
-    Stopped,
-}
-
 pub(crate) trait TsndtContext {
-    fn run(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> Result<(ContextRunState, Option<ContextId>)>;
+    fn handle_key_event(&mut self, key_event: KeyEvent, bpf: &mut aya::Ebpf) -> Result<()>;
+
+    fn handle_tick(&mut self, bpf: &aya::Ebpf) -> Result<()>;
+
+    fn draw(&mut self, frame: &mut Frame, context_area: Rect);
+
+    fn get_context_name(&self) -> String;
+
+    fn get_command_help(&self) -> Vec<String>;
 }
 
 pub(crate) mod network_interface;

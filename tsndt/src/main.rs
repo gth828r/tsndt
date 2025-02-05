@@ -20,7 +20,7 @@ async fn main() -> color_eyre::Result<()> {
     // 2. Fire up the display
     color_eyre::install()?;
     let terminal = ratatui::init();
-    let result = App::new(&mut bpf).run(terminal);
+    let result = App::new(&mut bpf).run(&mut bpf, terminal);
     ratatui::restore();
     result
 }
