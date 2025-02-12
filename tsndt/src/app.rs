@@ -16,7 +16,9 @@ use ratatui::{
 use tracing_error::ErrorLayer;
 use tracing_subscriber::{self, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
-use crate::context::{network_interface::NetworkInterfaceContext, ContextId, TsndtContext};
+use crate::context::{
+    ethernet::EthernetContext, network_interface::NetworkInterfaceContext, ContextId, TsndtContext,
+};
 
 const DEFAULT_CONTEXT_ID: ContextId = 0;
 pub(crate) const TICK_RATE_MS: u64 = 200;
@@ -126,6 +128,7 @@ impl App {
     pub(crate) fn new(bpf: &mut aya::Ebpf) -> Self {
         let contexts: Vec<Box<dyn TsndtContext>> = vec![
             Box::new(NetworkInterfaceContext::new(bpf)),
+            Box::new(EthernetContext::new()),
         ];
 
         Self {

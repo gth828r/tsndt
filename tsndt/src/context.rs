@@ -13,7 +13,7 @@ pub(crate) type ContextId = usize;
 pub(crate) trait TsndtContext {
     fn handle_key_event(&mut self, key_event: KeyEvent, bpf: &mut aya::Ebpf) -> Result<()>;
 
-    fn handle_tick(&mut self, bpf: &aya::Ebpf) -> Result<()>;
+    fn handle_tick(&mut self, bpf: &mut aya::Ebpf) -> Result<()>;
 
     fn draw(&mut self, frame: &mut Frame, context_area: Rect);
 
@@ -22,4 +22,5 @@ pub(crate) trait TsndtContext {
     fn get_command_help(&self) -> Vec<String>;
 }
 
+pub(crate) mod ethernet;
 pub(crate) mod network_interface;
