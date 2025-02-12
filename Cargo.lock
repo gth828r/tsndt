@@ -704,6 +704,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "network-types"
+version = "0.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e82e9f64c09f56aa7c80c3fa087997bd99a913f91d9c74d36cf5fd75dd5773e6"
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1300,6 +1306,7 @@ version = "0.1.0"
 dependencies = [
  "aya-ebpf",
  "aya-log-ebpf",
+ "network-types",
  "tsndt-common",
  "which",
 ]
