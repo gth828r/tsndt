@@ -14,6 +14,7 @@ use ratatui::{
     },
     Frame,
 };
+use tsndt_common::Counter;
 
 use super::TsndtContext;
 use crate::app::TICK_RATE_MS;
@@ -217,16 +218,13 @@ impl EthernetModel {
     fn on_tick(&mut self, bpf: &mut aya::Ebpf) -> Result<()> {
         self.tick_count += 1.0;
 
-        let src_mac_rx_packet_counters: aya::maps::PerCpuHashMap<&MapData, [u8; 6], u32> =
-            aya::maps::PerCpuHashMap::try_from(bpf.map("SRC_MAC_RX_PACKET_COUNTERS").unwrap())?;
-
-        let src_mac_rx_byte_counters: aya::maps::PerCpuHashMap<&MapData, [u8; 6], u64> =
-            aya::maps::PerCpuHashMap::try_from(bpf.map("SRC_MAC_RX_BYTE_COUNTERS").unwrap())?;
+        let src_mac_rx_counters: aya::maps::PerCpuHashMap<&MapData, [u8; 6], Counter> =
+            aya::maps::PerCpuHashMap::try_from(bpf.map("SRC_MAC_RX_COUNTERS").unwrap())?;
 
         let num_cpus =
             aya::util::nr_cpus().unwrap_or_else(|_| panic!("Could not get number of CPUs"));
 
-        for src_mac_packet_counter_entry in src_mac_rx_packet_counters.iter() {
+        for src_mac_packet_counter_entry in src_mac_rx_counters.iter() {
             let (src_mac, values) = src_mac_packet_counter_entry?;
 
             // Add the source MAC to the list if it was not being tracked with an active tick and
@@ -239,52 +237,46 @@ impl EthernetModel {
                 self.tick_packet_count_data.insert(src_mac, Vec::new());
             }
 
-            let l = self.tick_packet_count_data.get_mut(&src_mac).unwrap();
-            let prev_val = *self.cumul_packet_counts.get(&src_mac).unwrap();
+            let packet_counts_window = self.tick_packet_count_data.get_mut(&src_mac).unwrap();
+            let byte_counts_window = self.tick_byte_count_data.get_mut(&src_mac).unwrap();
 
-            if l.len() as f64 > self.window_size {
-                l.remove(0);
+            let prev_packet_count_val = *self.cumul_packet_counts.get(&src_mac).unwrap();
+            let prev_byte_count_val = self.cumul_byte_counts.get(&src_mac).unwrap();
+
+            if packet_counts_window.len() as f64 > self.window_size {
+                packet_counts_window.remove(0);
             }
 
-            let mut across_cpus_val: u32 = 0;
+            let mut across_cpus_packet_count: u32 = 0;
+            let mut across_cpus_byte_count: u64 = 0;
             for cpu_id in 0..num_cpus {
-                if let Some(cpu_val) = values.get(cpu_id) {
-                    across_cpus_val += cpu_val;
+                if let Some(cpu_counter) = values.get(cpu_id) {
+                    across_cpus_packet_count += cpu_counter.packets;
+                    across_cpus_byte_count += cpu_counter.bytes;
                 }
             }
 
-            l.push((self.tick_count, (across_cpus_val - prev_val) as f64));
-            self.cumul_packet_counts.insert(src_mac, across_cpus_val);
+            packet_counts_window.push((
+                self.tick_count,
+                (across_cpus_packet_count - prev_packet_count_val) as f64,
+            ));
+            self.cumul_packet_counts
+                .insert(src_mac, across_cpus_packet_count);
+
+            byte_counts_window.push((
+                self.tick_count,
+                (across_cpus_byte_count - prev_byte_count_val) as f64,
+            ));
+            self.cumul_byte_counts
+                .insert(src_mac, across_cpus_byte_count);
 
             // If new data arrived for this MAC entry, then update its last active tick to the current tick
-            // FIXME: this does not work. It seems to remove for a single tick and then re-add things.
-            if across_cpus_val > prev_val {
+            if across_cpus_packet_count > prev_packet_count_val {
                 *self
                     .last_active_tick
                     .entry(src_mac)
                     .or_insert(self.tick_count) = self.tick_count;
             }
-        }
-
-        for src_mac_byte_counter_entry in src_mac_rx_byte_counters.iter() {
-            let (src_mac, values) = src_mac_byte_counter_entry?;
-
-            let l = self.tick_byte_count_data.get_mut(&src_mac).unwrap();
-            let prev_val = self.cumul_byte_counts.get(&src_mac).unwrap();
-
-            if l.len() as f64 > self.window_size {
-                l.remove(0);
-            }
-
-            let mut across_cpus_val: u64 = 0;
-            for cpu_id in 0..num_cpus {
-                if let Some(cpu_val) = values.get(cpu_id) {
-                    across_cpus_val += cpu_val;
-                }
-            }
-
-            l.push((self.tick_count, (across_cpus_val - prev_val) as f64));
-            self.cumul_byte_counts.insert(src_mac, across_cpus_val);
         }
 
         // Remove MAC addresses which have been inactive for the duration of the timeout period
@@ -306,22 +298,10 @@ impl EthernetModel {
                 self.src_macs.swap_remove(index);
             }
 
-            let mut src_mac_rx_packet_counters: aya::maps::PerCpuHashMap<
-                &mut MapData,
-                [u8; 6],
-                u32,
-            > = aya::maps::PerCpuHashMap::try_from(
-                bpf.map_mut("SRC_MAC_RX_PACKET_COUNTERS").unwrap(),
-            )?;
+            let mut src_mac_rx_counters: aya::maps::PerCpuHashMap<&mut MapData, [u8; 6], u32> =
+                aya::maps::PerCpuHashMap::try_from(bpf.map_mut("SRC_MAC_RX_COUNTERS").unwrap())?;
 
-            src_mac_rx_packet_counters.remove(src_mac)?;
-
-            let mut src_mac_rx_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, [u8; 6], u64> =
-                aya::maps::PerCpuHashMap::try_from(
-                    bpf.map_mut("SRC_MAC_RX_BYTE_COUNTERS").unwrap(),
-                )?;
-
-            src_mac_rx_byte_counters.remove(src_mac)?;
+            src_mac_rx_counters.remove(src_mac)?;
         }
 
         if self.tick_count > self.window_size {

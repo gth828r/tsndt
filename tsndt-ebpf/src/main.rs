@@ -21,11 +21,7 @@ static INTERFACE_RX_COUNTERS: PerCpuHashMap<u32, Counter> =
     PerCpuHashMap::with_max_entries(MAX_NUM_INTERFACES, 0);
 
 #[map]
-static SRC_MAC_RX_PACKET_COUNTERS: LruPerCpuHashMap<[u8; 6], u32> =
-    LruPerCpuHashMap::with_max_entries(MAX_NUM_MAC_ADDRS, 0);
-
-#[map]
-static SRC_MAC_RX_BYTE_COUNTERS: LruPerCpuHashMap<[u8; 6], u64> =
+static SRC_MAC_RX_COUNTERS: LruPerCpuHashMap<[u8; 6], Counter> =
     LruPerCpuHashMap::with_max_entries(MAX_NUM_MAC_ADDRS, 0);
 
 #[xdp]
@@ -71,30 +67,23 @@ unsafe fn try_xdp_tsndt(ctx: XdpContext) -> Result<u32, u32> {
 
         let src_mac = (*eth_hdr).src_addr;
 
-        let count = SRC_MAC_RX_PACKET_COUNTERS.get_ptr_mut(&src_mac);
-        if let Some(count) = count {
-            *count += 1;
+        let counter = SRC_MAC_RX_COUNTERS.get_ptr_mut(&src_mac);
+        if let Some(counter) = counter {
+            (*counter).packets += 1;
+            (*counter).bytes += packet_byte_count;
         } else {
-            let res = SRC_MAC_RX_PACKET_COUNTERS.insert(&src_mac, &1, 0);
+            let res = SRC_MAC_RX_COUNTERS.insert(
+                &src_mac,
+                &Counter {
+                    packets: 1,
+                    bytes: packet_byte_count,
+                },
+                0,
+            );
             if let Err(e) = res {
                 error!(
                     &ctx,
                     "Failed to insert new ingress source MAC packet counter value"
-                );
-                return Err(e as u32);
-            }
-        }
-
-        let byte_count = SRC_MAC_RX_BYTE_COUNTERS.get_ptr_mut(&src_mac);
-        let packet_byte_count = (ctx.data_end() - ctx.data()) as u64;
-        if let Some(byte_count) = byte_count {
-            *byte_count += packet_byte_count;
-        } else {
-            let res = SRC_MAC_RX_BYTE_COUNTERS.insert(&src_mac, &packet_byte_count, 0);
-            if let Err(e) = res {
-                error!(
-                    &ctx,
-                    "Failed to insert new ingress source MAC byte counter value"
                 );
                 return Err(e as u32);
             }
