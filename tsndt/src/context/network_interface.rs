@@ -43,7 +43,6 @@ pub(crate) struct NetworkInterfaceContext {
 
 pub(crate) struct NetworkInterfaceView {
     interfaces_state: ListState,
-    interface_ui_colors: HashMap<u32, u8>,
     packet_count_y_bounds: [f64; 2],
     byte_count_y_bounds: [f64; 2],
     histogram_width_percentage: u16,
@@ -235,14 +234,6 @@ impl NetworkInterfaceContext {
         interfaces.sort_by(|a, b| a.index.partial_cmp(&b.index).unwrap());
         let interfaces_state = ListState::default().with_selected(Some(0));
 
-        // Initialize the color indices for interfaces
-        let mut color_index = 1;
-        let mut interface_ui_colors = HashMap::new();
-        for interface in &interfaces {
-            interface_ui_colors.insert(interface.index, color_index);
-            color_index += 1;
-        }
-
         // Initialize packet counts to 0
         let mut cur_packet_counts = HashMap::new();
         let mut cumul_packet_counts = HashMap::new();
@@ -291,7 +282,6 @@ impl NetworkInterfaceContext {
             view: NetworkInterfaceView {
                 packet_count_y_bounds: [0.0, 40.0],
                 byte_count_y_bounds: [0.0, 50000.0],
-                interface_ui_colors,
                 histogram_width_percentage: DEFAULT_HISTOGRAM_WIDTH_PERCENTAGE,
                 zoom_context: ZoomContext::Packet,
                 byte_counter_height_percentage: DEFAULT_BYTE_COUNTERS_HEIGHT_PERCENTAGE,
@@ -526,6 +516,7 @@ impl NetworkInterfaceView {
         // If all values are 0 in the plot, and autoscaling starts at 0, then no points get plotted.
         let mut max_val = 1.0f64;
         let mut datasets = Vec::with_capacity(model.interfaces.len());
+        let mut color_index = 1u8;
         for interface in &model.interfaces {
             let collecting = model.collecting.get(&interface.index);
             if let Some(collecting) = collecting {
@@ -537,17 +528,12 @@ impl NetworkInterfaceView {
                     } else {
                         iface_max_val
                     };
-                    let color_index = self
-                        .interface_ui_colors
-                        .get(&interface.index)
-                        .unwrap_or_else(|| {
-                            panic!("No color found for interface {}", interface.name)
-                        });
                     let dataset = Dataset::default()
                         .name(interface.name.clone())
                         .marker(symbols::Marker::Dot)
-                        .style(Style::default().fg(Color::Indexed(*color_index)))
+                        .style(Style::default().fg(Color::Indexed(color_index)))
                         .data(data);
+                    color_index += 1;
                     datasets.push(dataset);
                 }
             } else {
@@ -662,6 +648,7 @@ impl NetworkInterfaceView {
         // If all values are 0 in the plot, and autoscaling starts at 0, then no points get plotted.
         let mut max_val = 1.0f64;
         let mut datasets = Vec::with_capacity(model.interfaces.len());
+        let mut color_index = 1u8;
         for interface in &model.interfaces {
             let collecting = model.collecting.get(&interface.index);
             if let Some(collecting) = collecting {
@@ -673,17 +660,12 @@ impl NetworkInterfaceView {
                     } else {
                         iface_max_val
                     };
-                    let color_index = self
-                        .interface_ui_colors
-                        .get(&interface.index)
-                        .unwrap_or_else(|| {
-                            panic!("No color found for interface {}", interface.name)
-                        });
                     let dataset = Dataset::default()
                         .name(interface.name.clone())
                         .marker(symbols::Marker::Dot)
-                        .style(Style::default().fg(Color::Indexed(*color_index)))
+                        .style(Style::default().fg(Color::Indexed(color_index)))
                         .data(data);
+                    color_index += 1;
                     datasets.push(dataset);
                 }
             } else {
@@ -779,14 +761,10 @@ impl NetworkInterfaceView {
             .interfaces
             .iter()
             .map(|iface| {
-                let color_index = self
-                    .interface_ui_colors
-                    .get(&iface.index)
-                    .unwrap_or_else(|| panic!("No color found for interface {}", iface.name));
                 let collecting = model.collecting.get(&iface.index);
                 let color = if let Some(collecting) = collecting {
                     if *collecting {
-                        Color::Indexed(*color_index)
+                        Color::default()
                     } else {
                         DISABLED_COLOR
                     }
