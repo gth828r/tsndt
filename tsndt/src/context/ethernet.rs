@@ -546,7 +546,9 @@ impl EthernetView {
                     .style(Style::default().fg(DISABLED_COLOR))
                     .labels(y_labels)
                     .bounds(self.byte_count_y_bounds),
-            );
+            )
+            .hidden_legend_constraints((Constraint::Min(0), Constraint::Min(0)))
+            .legend_position(Some(LegendPosition::TopLeft));
 
         frame.render_widget(chart, area);
     }
