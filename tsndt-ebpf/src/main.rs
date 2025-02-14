@@ -11,24 +11,17 @@ use aya_ebpf::{
 };
 use aya_log_ebpf::error;
 use network_types::eth::EthHdr;
+use tsndt_common::Counter;
 
 const MAX_NUM_INTERFACES: u32 = 1024;
 const MAX_NUM_MAC_ADDRS: u32 = 8192;
 
 #[map]
-static INTERFACE_RX_PACKET_COUNTERS: PerCpuHashMap<u32, u32> =
+static INTERFACE_RX_COUNTERS: PerCpuHashMap<u32, Counter> =
     PerCpuHashMap::with_max_entries(MAX_NUM_INTERFACES, 0);
 
 #[map]
-static INTERFACE_RX_BYTE_COUNTERS: PerCpuHashMap<u32, u64> =
-    PerCpuHashMap::with_max_entries(MAX_NUM_INTERFACES, 0);
-
-#[map]
-static SRC_MAC_RX_PACKET_COUNTERS: LruPerCpuHashMap<[u8; 6], u32> =
-    LruPerCpuHashMap::with_max_entries(MAX_NUM_MAC_ADDRS, 0);
-
-#[map]
-static SRC_MAC_RX_BYTE_COUNTERS: LruPerCpuHashMap<[u8; 6], u64> =
+static SRC_MAC_RX_COUNTERS: LruPerCpuHashMap<[u8; 6], Counter> =
     LruPerCpuHashMap::with_max_entries(MAX_NUM_MAC_ADDRS, 0);
 
 #[xdp]
@@ -45,25 +38,22 @@ unsafe fn try_xdp_tsndt(ctx: XdpContext) -> Result<u32, u32> {
     let index = ctx.ingress_ifindex() as u32;
 
     unsafe {
-        let count = INTERFACE_RX_PACKET_COUNTERS.get_ptr_mut(&index);
-        if let Some(count) = count {
-            *count += 1;
-        } else {
-            let res = INTERFACE_RX_PACKET_COUNTERS.insert(&index, &1, 0);
-            if let Err(e) = res {
-                error!(&ctx, "Failed to insert new ingress packet counter value");
-                return Err(e as u32);
-            }
-        }
-
-        let byte_count = INTERFACE_RX_BYTE_COUNTERS.get_ptr_mut(&index);
         let packet_byte_count = (ctx.data_end() - ctx.data()) as u64;
-        if let Some(byte_count) = byte_count {
-            *byte_count += packet_byte_count;
+        let counter_opt = INTERFACE_RX_COUNTERS.get_ptr_mut(&index);
+        if let Some(counter) = counter_opt {
+            (*counter).packets += 1;
+            (*counter).bytes += packet_byte_count;
         } else {
-            let res = INTERFACE_RX_BYTE_COUNTERS.insert(&index, &packet_byte_count, 0);
+            let res = INTERFACE_RX_COUNTERS.insert(
+                &index,
+                &Counter {
+                    packets: 1,
+                    bytes: packet_byte_count,
+                },
+                0,
+            );
             if let Err(e) = res {
-                error!(&ctx, "Failed to insert new ingress byte counter value");
+                error!(&ctx, "Failed to insert new ingress counter values");
                 return Err(e as u32);
             }
         }
@@ -77,30 +67,23 @@ unsafe fn try_xdp_tsndt(ctx: XdpContext) -> Result<u32, u32> {
 
         let src_mac = (*eth_hdr).src_addr;
 
-        let count = SRC_MAC_RX_PACKET_COUNTERS.get_ptr_mut(&src_mac);
-        if let Some(count) = count {
-            *count += 1;
+        let counter = SRC_MAC_RX_COUNTERS.get_ptr_mut(&src_mac);
+        if let Some(counter) = counter {
+            (*counter).packets += 1;
+            (*counter).bytes += packet_byte_count;
         } else {
-            let res = SRC_MAC_RX_PACKET_COUNTERS.insert(&src_mac, &1, 0);
+            let res = SRC_MAC_RX_COUNTERS.insert(
+                &src_mac,
+                &Counter {
+                    packets: 1,
+                    bytes: packet_byte_count,
+                },
+                0,
+            );
             if let Err(e) = res {
                 error!(
                     &ctx,
                     "Failed to insert new ingress source MAC packet counter value"
-                );
-                return Err(e as u32);
-            }
-        }
-
-        let byte_count = SRC_MAC_RX_BYTE_COUNTERS.get_ptr_mut(&src_mac);
-        let packet_byte_count = (ctx.data_end() - ctx.data()) as u64;
-        if let Some(byte_count) = byte_count {
-            *byte_count += packet_byte_count;
-        } else {
-            let res = SRC_MAC_RX_BYTE_COUNTERS.insert(&src_mac, &packet_byte_count, 0);
-            if let Err(e) = res {
-                error!(
-                    &ctx,
-                    "Failed to insert new ingress source MAC byte counter value"
                 );
                 return Err(e as u32);
             }

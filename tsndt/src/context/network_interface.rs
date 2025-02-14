@@ -19,6 +19,7 @@ use ratatui::{
     },
     Frame,
 };
+use tsndt_common::Counter;
 
 use super::TsndtContext;
 use crate::app::TICK_RATE_MS;
@@ -94,32 +95,20 @@ fn init_ebpf_programs(
         xdp_link_ids.insert(interface.index, link_id);
     }
 
-    let mut ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u32> =
-        aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INTERFACE_RX_PACKET_COUNTERS").unwrap())
-            .unwrap();
+    let mut ebpf_interface_rx_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, Counter> =
+        aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INTERFACE_RX_COUNTERS").unwrap()).unwrap();
 
     for interface in interfaces {
-        if ebpf_ingress_packet_counters
-            .get(&interface.index, 0)
-            .is_err()
-        {
-            ebpf_ingress_packet_counters.insert(
+        if ebpf_interface_rx_counters.get(&interface.index, 0).is_err() {
+            ebpf_interface_rx_counters.insert(
                 interface.index,
-                PerCpuValues::try_from(vec![0u32; num_cpus])?,
-                0,
-            )?;
-        }
-    }
-
-    let mut ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u64> =
-        aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INTERFACE_RX_BYTE_COUNTERS").unwrap())
-            .unwrap();
-
-    for interface in interfaces {
-        if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
-            ebpf_ingress_byte_counters.insert(
-                interface.index,
-                PerCpuValues::try_from(vec![0u64; num_cpus])?,
+                PerCpuValues::try_from(vec![
+                    Counter {
+                        bytes: 0,
+                        packets: 0
+                    };
+                    num_cpus
+                ])?,
                 0,
             )?;
         }
@@ -358,34 +347,26 @@ impl NetworkInterfaceModel {
             self.xdp_link_ids.insert(interface_index, xdp_link_id);
             let num_cpus = aya::util::nr_cpus().unwrap();
 
-            let mut ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u32> =
-                aya::maps::PerCpuHashMap::try_from(
-                    bpf.map_mut("INTERFACE_RX_PACKET_COUNTERS").unwrap(),
-                )
+            let mut ebpf_interface_rx_counters: aya::maps::PerCpuHashMap<
+                &mut MapData,
+                u32,
+                Counter,
+            > = aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INTERFACE_RX_COUNTERS").unwrap())
                 .unwrap();
-            if ebpf_ingress_packet_counters
-                .get(&interface.index, 0)
-                .is_err()
-            {
-                ebpf_ingress_packet_counters.insert(
+            if ebpf_interface_rx_counters.get(&interface.index, 0).is_err() {
+                ebpf_interface_rx_counters.insert(
                     interface.index,
-                    PerCpuValues::try_from(vec![0u32; num_cpus])?,
+                    PerCpuValues::try_from(vec![
+                        Counter {
+                            bytes: 0,
+                            packets: 0
+                        };
+                        num_cpus
+                    ])?,
                     0,
                 )?;
             }
 
-            let mut ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u64> =
-                aya::maps::PerCpuHashMap::try_from(
-                    bpf.map_mut("INTERFACE_RX_BYTE_COUNTERS").unwrap(),
-                )
-                .unwrap();
-            if ebpf_ingress_byte_counters.get(&interface.index, 0).is_err() {
-                ebpf_ingress_byte_counters.insert(
-                    interface.index,
-                    PerCpuValues::try_from(vec![0u64; num_cpus])?,
-                    0,
-                )?;
-            }
             Ok(())
         } else {
             Err(eyre!(
@@ -402,36 +383,27 @@ impl NetworkInterfaceModel {
             let program: &mut Xdp = bpf.program_mut("xdp_tsndt").unwrap().try_into()?;
             program.detach(xdp_link_id)
             .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE").unwrap();
-            let mut ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u32> =
-                aya::maps::PerCpuHashMap::try_from(
-                    bpf.map_mut("INTERFACE_RX_PACKET_COUNTERS").unwrap(),
-                )
+            let mut ebpf_interface_rx_counters: aya::maps::PerCpuHashMap<
+                &mut MapData,
+                u32,
+                Counter,
+            > = aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INTERFACE_RX_COUNTERS").unwrap())
                 .unwrap();
-            if ebpf_ingress_packet_counters
-                .get(&interface_index, 0)
-                .is_err()
-            {
-                ebpf_ingress_packet_counters.insert(
+            if ebpf_interface_rx_counters.get(&interface_index, 0).is_err() {
+                ebpf_interface_rx_counters.insert(
                     interface_index,
-                    PerCpuValues::try_from(vec![0u32; num_cpus])?,
+                    PerCpuValues::try_from(vec![
+                        Counter {
+                            bytes: 0,
+                            packets: 0
+                        };
+                        num_cpus
+                    ])?,
                     0,
                 )?;
             }
             self.tick_packet_count_data
                 .insert(interface_index, vec![(0.0, 0.0); 1]);
-
-            let mut ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, u64> =
-                aya::maps::PerCpuHashMap::try_from(
-                    bpf.map_mut("INTERFACE_RX_BYTE_COUNTERS").unwrap(),
-                )
-                .unwrap();
-            if ebpf_ingress_byte_counters.get(&interface_index, 0).is_err() {
-                ebpf_ingress_byte_counters.insert(
-                    interface_index,
-                    PerCpuValues::try_from(vec![0u64; num_cpus])?,
-                    0,
-                )?;
-            }
             self.tick_byte_count_data
                 .insert(interface_index, vec![(0.0, 0.0); 1]);
             Ok(())
@@ -446,60 +418,53 @@ impl NetworkInterfaceModel {
     fn on_tick(&mut self, bpf: &aya::Ebpf) -> Result<()> {
         self.tick_count += 1.0;
 
-        let ebpf_ingress_packet_counters: aya::maps::PerCpuHashMap<&MapData, u32, u32> =
-            aya::maps::PerCpuHashMap::try_from(bpf.map("INTERFACE_RX_PACKET_COUNTERS").unwrap())?;
+        let ebpf_interface_rx_counters: aya::maps::PerCpuHashMap<&MapData, u32, Counter> =
+            aya::maps::PerCpuHashMap::try_from(bpf.map("INTERFACE_RX_COUNTERS").unwrap())?;
 
         let num_cpus =
             aya::util::nr_cpus().unwrap_or_else(|_| panic!("Could not get number of CPUs"));
 
         for interface in &self.interfaces {
-            let result_val = ebpf_ingress_packet_counters.get(&interface.index, 0)?;
-            let l = self
+            let result_val = ebpf_interface_rx_counters.get(&interface.index, 0)?;
+            let packet_counts_window = self
                 .tick_packet_count_data
                 .get_mut(&interface.index)
                 .unwrap();
-            let prev_val = self.cumul_packet_counts.get(&interface.index).unwrap();
+            let byte_counts_window = self.tick_byte_count_data.get_mut(&interface.index).unwrap();
+            let prev_packet_count_val = self.cumul_packet_counts.get(&interface.index).unwrap();
+            let prev_byte_count_val = self.cumul_byte_counts.get(&interface.index).unwrap();
 
-            if l.len() as f64 > self.window_size {
-                l.remove(0);
+            if packet_counts_window.len() as f64 > self.window_size {
+                packet_counts_window.remove(0);
+            }
+
+            if byte_counts_window.len() as f64 > self.window_size {
+                byte_counts_window.remove(0);
             }
 
             // Sum up the value across all CPUs
-            let mut across_cpus_val: u32 = 0;
+            let mut across_cpus_packet_count: u32 = 0;
+            let mut across_cpus_byte_count: u64 = 0;
             for cpu_id in 0..num_cpus {
-                if let Some(cpu_val) = result_val.get(cpu_id) {
-                    across_cpus_val += cpu_val;
+                if let Some(cpu_counter) = result_val.get(cpu_id) {
+                    across_cpus_packet_count += cpu_counter.packets;
+                    across_cpus_byte_count += cpu_counter.bytes;
                 }
             }
 
-            l.push((self.tick_count, (across_cpus_val - prev_val) as f64));
+            packet_counts_window.push((
+                self.tick_count,
+                (across_cpus_packet_count - prev_packet_count_val) as f64,
+            ));
             self.cumul_packet_counts
-                .insert(interface.index, across_cpus_val);
-        }
+                .insert(interface.index, across_cpus_packet_count);
 
-        let ebpf_ingress_byte_counters: aya::maps::PerCpuHashMap<&MapData, u32, u64> =
-            aya::maps::PerCpuHashMap::try_from(bpf.map("INTERFACE_RX_BYTE_COUNTERS").unwrap())?;
-
-        for interface in &self.interfaces {
-            let result_val = ebpf_ingress_byte_counters.get(&interface.index, 0)?;
-            let l = self.tick_byte_count_data.get_mut(&interface.index).unwrap();
-            let prev_val = self.cumul_byte_counts.get(&interface.index).unwrap();
-
-            if l.len() as f64 > self.window_size {
-                l.remove(0);
-            }
-
-            // Sum up the value across all CPUs
-            let mut across_cpus_val: u64 = 0;
-            for cpu_id in 0..num_cpus {
-                if let Some(cpu_val) = result_val.get(cpu_id) {
-                    across_cpus_val += cpu_val;
-                }
-            }
-
-            l.push((self.tick_count, (across_cpus_val - prev_val) as f64));
+            byte_counts_window.push((
+                self.tick_count,
+                (across_cpus_byte_count - prev_byte_count_val) as f64,
+            ));
             self.cumul_byte_counts
-                .insert(interface.index, across_cpus_val);
+                .insert(interface.index, across_cpus_byte_count);
         }
 
         if self.tick_count > self.window_size {
