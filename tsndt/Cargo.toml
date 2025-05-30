@@ -17,7 +17,7 @@ clap = { workspace = true, features = ["derive"] }
 anyhow.workspace = true
 network-interface = "2.0.1"
 color-eyre = "0.6.3"
-crossterm = "0.28.1"
+crossterm = "0.29.0"
 ratatui = "0.29.0"
 tracing = "0.1.41"
 directories = "6.0.0"
