@@ -17,11 +17,11 @@ const MAX_NUM_INTERFACES: u32 = 1024;
 const MAX_NUM_MAC_ADDRS: u32 = 8192;
 
 #[map]
-static INTERFACE_RX_COUNTERS: PerCpuHashMap<u32, Counter> =
+static IF_RX_COUNT: PerCpuHashMap<u32, Counter> =
     PerCpuHashMap::with_max_entries(MAX_NUM_INTERFACES, 0);
 
 #[map]
-static SRC_MAC_RX_COUNTERS: LruPerCpuHashMap<[u8; 6], Counter> =
+static SMAC_RX_COUNT: LruPerCpuHashMap<[u8; 6], Counter> =
     LruPerCpuHashMap::with_max_entries(MAX_NUM_MAC_ADDRS, 0);
 
 #[xdp]
@@ -39,12 +39,12 @@ unsafe fn try_xdp_tsndt(ctx: XdpContext) -> Result<u32, u32> {
 
     unsafe {
         let packet_byte_count = (ctx.data_end() - ctx.data()) as u64;
-        let counter_opt = INTERFACE_RX_COUNTERS.get_ptr_mut(&index);
+        let counter_opt = IF_RX_COUNT.get_ptr_mut(&index);
         if let Some(counter) = counter_opt {
             (*counter).packets += 1;
             (*counter).bytes += packet_byte_count;
         } else {
-            let res = INTERFACE_RX_COUNTERS.insert(
+            let res = IF_RX_COUNT.insert(
                 &index,
                 &Counter {
                     packets: 1,
@@ -67,12 +67,12 @@ unsafe fn try_xdp_tsndt(ctx: XdpContext) -> Result<u32, u32> {
 
         let src_mac = (*eth_hdr).src_addr;
 
-        let counter = SRC_MAC_RX_COUNTERS.get_ptr_mut(&src_mac);
+        let counter = SMAC_RX_COUNT.get_ptr_mut(&src_mac);
         if let Some(counter) = counter {
             (*counter).packets += 1;
             (*counter).bytes += packet_byte_count;
         } else {
-            let res = SRC_MAC_RX_COUNTERS.insert(
+            let res = SMAC_RX_COUNT.insert(
                 &src_mac,
                 &Counter {
                     packets: 1,

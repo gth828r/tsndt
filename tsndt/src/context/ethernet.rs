@@ -219,7 +219,7 @@ impl EthernetModel {
         self.tick_count += 1.0;
 
         let src_mac_rx_counters: aya::maps::PerCpuHashMap<&MapData, [u8; 6], Counter> =
-            aya::maps::PerCpuHashMap::try_from(bpf.map("SRC_MAC_RX_COUNTERS").unwrap())?;
+            aya::maps::PerCpuHashMap::try_from(bpf.map("SMAC_RX_COUNT").unwrap())?;
 
         let num_cpus =
             aya::util::nr_cpus().unwrap_or_else(|_| panic!("Could not get number of CPUs"));
@@ -299,7 +299,7 @@ impl EthernetModel {
             }
 
             let mut src_mac_rx_counters: aya::maps::PerCpuHashMap<&mut MapData, [u8; 6], u32> =
-                aya::maps::PerCpuHashMap::try_from(bpf.map_mut("SRC_MAC_RX_COUNTERS").unwrap())?;
+                aya::maps::PerCpuHashMap::try_from(bpf.map_mut("SMAC_RX_COUNT").unwrap())?;
 
             src_mac_rx_counters.remove(src_mac)?;
         }

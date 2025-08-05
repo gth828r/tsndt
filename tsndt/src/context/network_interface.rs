@@ -95,7 +95,7 @@ fn init_ebpf_programs(
     }
 
     let mut ebpf_interface_rx_counters: aya::maps::PerCpuHashMap<&mut MapData, u32, Counter> =
-        aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INTERFACE_RX_COUNTERS").unwrap()).unwrap();
+        aya::maps::PerCpuHashMap::try_from(bpf.map_mut("IF_RX_COUNT").unwrap()).unwrap();
 
     for interface in interfaces {
         if ebpf_interface_rx_counters.get(&interface.index, 0).is_err() {
@@ -341,8 +341,7 @@ impl NetworkInterfaceModel {
                 &mut MapData,
                 u32,
                 Counter,
-            > = aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INTERFACE_RX_COUNTERS").unwrap())
-                .unwrap();
+            > = aya::maps::PerCpuHashMap::try_from(bpf.map_mut("IF_RX_COUNT").unwrap()).unwrap();
             if ebpf_interface_rx_counters.get(&interface.index, 0).is_err() {
                 ebpf_interface_rx_counters.insert(
                     interface.index,
@@ -377,8 +376,7 @@ impl NetworkInterfaceModel {
                 &mut MapData,
                 u32,
                 Counter,
-            > = aya::maps::PerCpuHashMap::try_from(bpf.map_mut("INTERFACE_RX_COUNTERS").unwrap())
-                .unwrap();
+            > = aya::maps::PerCpuHashMap::try_from(bpf.map_mut("IF_RX_COUNT").unwrap()).unwrap();
             if ebpf_interface_rx_counters.get(&interface_index, 0).is_err() {
                 ebpf_interface_rx_counters.insert(
                     interface_index,
@@ -409,7 +407,7 @@ impl NetworkInterfaceModel {
         self.tick_count += 1.0;
 
         let ebpf_interface_rx_counters: aya::maps::PerCpuHashMap<&MapData, u32, Counter> =
-            aya::maps::PerCpuHashMap::try_from(bpf.map("INTERFACE_RX_COUNTERS").unwrap())?;
+            aya::maps::PerCpuHashMap::try_from(bpf.map("IF_RX_COUNT").unwrap())?;
 
         let num_cpus =
             aya::util::nr_cpus().unwrap_or_else(|_| panic!("Could not get number of CPUs"));
