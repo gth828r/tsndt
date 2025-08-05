@@ -63,7 +63,7 @@ pub(crate) struct EthernetModel {
 }
 
 fn get_mac_string(mac: &[u8; 6]) -> String {
-    let hex_strings: Vec<String> = mac.iter().map(|octet| format!("{:02x?}", octet)).collect();
+    let hex_strings: Vec<String> = mac.iter().map(|octet| format!("{octet:02x?}")).collect();
     hex_strings.join(":")
 }
 
@@ -412,7 +412,7 @@ impl EthernetView {
             .block(
                 Block::bordered()
                     .border_style(border_style)
-                    .title(format!("Packet count per {} ms", TICK_RATE_MS)),
+                    .title(format!("Packet count per {TICK_RATE_MS} ms")),
             )
             .x_axis(
                 Axis::default()
@@ -531,7 +531,7 @@ impl EthernetView {
             .block(
                 Block::bordered()
                     .border_style(border_style)
-                    .title(format!("Byte count per {} ms", TICK_RATE_MS)),
+                    .title(format!("Byte count per {TICK_RATE_MS} ms")),
             )
             .x_axis(
                 Axis::default()
