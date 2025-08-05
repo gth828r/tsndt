@@ -568,7 +568,7 @@ impl NetworkInterfaceView {
             .block(
                 Block::bordered()
                     .border_style(border_style)
-                    .title(format!("Packet count per {} ms", TICK_RATE_MS)),
+                    .title(format!("Packet count per {TICK_RATE_MS} ms")),
             )
             .x_axis(
                 Axis::default()
@@ -700,7 +700,7 @@ impl NetworkInterfaceView {
             .block(
                 Block::bordered()
                     .border_style(border_style)
-                    .title(format!("Byte count per {} ms", TICK_RATE_MS)),
+                    .title(format!("Byte count per {TICK_RATE_MS} ms")),
             )
             .x_axis(
                 Axis::default()
