@@ -19,7 +19,7 @@ aya-log-ebpf = { git = "https://github.com/gth828r/aya.git", branch = "1140.xdp-
 # `std` feature is currently required to build `clap`.
 #
 # See https://github.com/clap-rs/clap/blob/61f5ee5/clap_builder/src/lib.rs#L15.
-clap = { version = "4.5.42", default-features = false, features = ["std"] }
+clap = { version = "4.5.43", default-features = false, features = ["std"] }
 env_logger = { version = "0.11.8", default-features = false }
 libc = { version = "0.2.175", default-features = false }
 log = { version = "0.4.27", default-features = false }
