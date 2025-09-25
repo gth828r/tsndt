@@ -49,7 +49,7 @@ jobs:
       - name: Install Aya's bpf-linker
         run: cargo install bpf-linker
       - name: Run clippy action
-        uses: clechasseur/rs-clippy-check@v4
+        uses: clechasseur/rs-clippy-check@v5
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
   doc:
