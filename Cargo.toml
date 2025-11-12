@@ -24,7 +24,7 @@ env_logger = { version = "0.11.8", default-features = false }
 libc = { version = "0.2.177", default-features = false }
 log = { version = "0.4.28", default-features = false }
 tokio = { version = "1.48.0", default-features = false }
-which = { version = "8.0.0", default-features = false }
+which = { version = "8.0.0", default-features = false, features = ["real-sys"] }
 
 [profile.release.package.tsndt-ebpf]
 debug = 2
