@@ -15,7 +15,7 @@ log = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "net", "time", "signal"] }
 clap = { workspace = true, features = ["derive"] }
 anyhow.workspace = true
-network-interface = "2.0.4"
+network-interface = "2.0.5"
 color-eyre = "0.6.5"
 crossterm = "0.29.0"
 ratatui = "0.29.0"
